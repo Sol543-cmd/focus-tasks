@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<!--
+  Focus Tasks for your phone.
+  Reads and writes the same files Focus uses in your OneDrive "Focus" folder
+  (task-bin.json, resolved-tasks.json, projects.json), so phone and computers stay in step.
+  Setup: put your Application (client) ID below (search for PASTE), then host this file (see SETUP.md).
+  It talks only to Microsoft sign-in and Microsoft's OneDrive service, as you.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#DC4C3E">
+<title>Focus Tasks</title>
+<style>
+  :root {
+    --bg: #FAF9F7; --panel: #FFFFFF; --panel2: #F4F2EF; --line: #ECEAE6;
+    --text: #202020; --muted: #7A7A7A; --accent: #DC4C3E; --tint: #FCEDEB;
+    --high: #D1453B; --normal: #9A9A9A; --low: #CFCFCF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1E1E1E; --panel: #262626; --panel2: #2E2E2E; --line: #333333;
+            --text: #E8E8E8; --muted: #9C9C9C; --accent: #E5604F; --tint: #3A2420;
+            --high: #E5604F; --normal: #8A8A8A; --low: #555555; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { padding-top: env(safe-area-inset-top, 0px); }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 680px; margin: 0 auto; padding: 14px 14px 130px; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  header h1 { font-size: 24px; margin: 0; flex: 1; }
+  .logo { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); display: grid; place-items: center; color: #fff; font-weight: 700; }
+  button { font: inherit; color: var(--text); background: var(--panel2); border: 0; border-radius: 9px; padding: 9px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+  button.icon { background: transparent; padding: 8px 10px; color: var(--muted); font-size: 18px; }
+  button.link { background: transparent; color: var(--accent); padding: 6px 8px; }
+  .stats { color: var(--muted); font-size: 13px; margin: -4px 0 12px; }
+  .stats b { color: var(--text); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; overflow-x: auto; }
+  .tabs button { white-space: nowrap; }
+  .tabs button[aria-pressed="true"] { background: var(--tint); color: var(--accent); font-weight: 600; }
+  .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 8px; }
+  .chips button { font-size: 13px; padding: 6px 11px; white-space: nowrap; border-radius: 20px; }
+  .chips button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  input, select, textarea { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+                            border-radius: 9px; padding: 10px 12px; width: 100%; }
+  textarea { min-height: 80px; resize: vertical; }
+  #search { margin-bottom: 10px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li.task { display: flex; gap: 12px; align-items: flex-start; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+  .check { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--normal); background: transparent;
+           padding: 0; margin-top: 1px; display: grid; place-items: center; color: transparent; font-size: 12px; }
+  .check.high { border-color: var(--high); } .check.low { border-color: var(--low); }
+  .check.done { background: var(--muted); border-color: var(--muted); color: #fff; }
+  .body { flex: 1; min-width: 0; cursor: pointer; }
+  .title { word-break: break-word; }
+  .details { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .details.overdue { color: var(--high); }
+  h2 { font-size: 14px; margin: 18px 0 4px; color: var(--muted); font-weight: 600; }
+  .empty { color: var(--muted); text-align: center; padding: 30px 10px; }
+  .status { color: var(--muted); font-size: 12px; text-align: center; min-height: 16px; margin-top: 12px; }
+  .status.error { color: var(--high); }
+  .center { text-align: center; margin-top: 70px; }
+  .hidden { display: none !important; }
+  .addbar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line);
+            padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .addbar form { max-width: 680px; margin: 0 auto; display: flex; gap: 8px; }
+  .addbar small { display: block; max-width: 680px; margin: 4px auto 0; color: var(--muted); font-size: 11px; }
+  .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
+  .sheet .card { background: var(--panel); width: 100%; max-width: 680px; max-height: 92vh; overflow-y: auto;
+                 border-radius: 16px 16px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .card label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 4px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 140px; }
+  .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg button { padding: 7px 12px; font-size: 14px; }
+  .seg button[aria-pressed="true"] { background: var(--tint); color: var(--accent); font-weight: 600; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .steps li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .steps li span { flex: 1; }
+  .sheetbar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 96px; background: var(--text); color: var(--bg);
+           padding: 9px 16px; border-radius: 20px; font-size: 14px; z-index: 20; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo">✓</div>
+    <h1>Tasks</h1>
+    <button class="icon" id="searchBtn" aria-label="Search">⌕</button>
+    <button class="icon" id="refresh" aria-label="Refresh">⟳</button>
+    <button class="icon hidden" id="signout" aria-label="Sign out">⎋</button>
+  </header>
+
+  <section id="signedOut" class="center hidden">
+    <p>Sign in with the Microsoft account your Focus folder is in.</p>
+    <button class="primary" id="signin">Sign in</button>
+  </section>
+
+  <section id="app" class="hidden">
+    <div class="stats" id="stats"></div>
+    <div class="tabs" id="tabs">
+      <button data-view="today" aria-pressed="true">Today</button>
+      <button data-view="all" aria-pressed="false">All</button>
+      <button data-view="upcoming" aria-pressed="false">Upcoming</button>
+      <button data-view="done" aria-pressed="false">Done</button>
+    </div>
+    <input id="search" class="hidden" placeholder="Search tasks, tags and notes" autocomplete="off">
+    <div class="chips" id="chips"></div>
+    <div id="list"></div>
+  </section>
+
+  <p class="status" id="status"></p>
+</main>
+
+<div class="addbar hidden" id="addbar">
+  <form id="addForm">
+    <input id="newTask" placeholder="Add a task" autocomplete="off" enterkeyhint="done">
+    <button class="primary" type="submit">Add</button>
+  </form>
+  <small>Try: Call Sam friday at 3pm #client !   or   Pay rent every month on the 1st</small>
+</div>
+
+<div class="sheet hidden" id="sheet"><div class="card" id="sheetCard"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
+
+<!-- ================= Task logic (no screen code; mirrors Focus on your computer) ================= -->
+<script id="logic">
+const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const ORDINALS = ["first", "second", "third", "fourth"];
+
+function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function addMonths(d, n) { const x = new Date(d); x.setDate(1); x.setMonth(x.getMonth() + n); return x; }
+function sameDay(a, b) { return !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
+function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+const pad = n => String(n).padStart(2, "0");
+/** Local time with no time zone, the way Focus saves dates. */
+function iso(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function ymd(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+function parseDate(s) { if (!s) return null; const d = new Date(s); return isNaN(d) ? null : d; }
+function parseYmd(s) { if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null; const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
+function words(text) { return text.toLowerCase().replace(/,/g, " , ").split(/\s+/).filter(Boolean); }
+
+function weekday(word) {
+  word = (word || "").replace(/[,.]/g, "").toLowerCase();
+  if (word.length < 3) return null;
+  for (let i = 0; i < 7; i++) { const n = DAY_NAMES[i]; if (word === n || word === n + "s" || n.startsWith(word)) return i; }
+  return null;
+}
+function month(word) {
+  word = (word || "").replace(/[,.]/g, "").toLowerCase();
+  if (word.length < 3) return null;
+  for (let i = 0; i < 12; i++) if (MONTHS[i] === word || MONTHS[i].startsWith(word)) return i;
+  return null;
+}
+function dayNumber(word) {
+  const m = /^(\d{1,2})(st|nd|rd|th)?$/.exec(word || "");
+  if (!m) return null; const n = +m[1]; return n >= 1 && n <= 31 ? n : null;
+}
+function ordinal(word) {
+  if (word === "last") return -1;
+  const i = ORDINALS.indexOf(word); if (i >= 0) return i + 1;
+  const o = { "1st": 1, "2nd": 2, "3rd": 3, "4th": 4 }[word];
+  return o === undefined ? null : o;
+}
+function upcoming(today, m, d) {
+  const y = today.getFullYear();
+  let date = new Date(y, m, Math.min(d, daysInMonth(y, m)));
+  if (date < addDays(today, -30)) date = new Date(y + 1, m, Math.min(d, daysInMonth(y + 1, m)));
+  return date;
+}
+function nextWeekday(today, dow, strict) { let ahead = (dow - today.getDay() + 7) % 7; if (strict && ahead === 0) ahead = 7; return addDays(today, ahead); }
+function endOfWeek(today) { return addDays(today, (5 - today.getDay() + 7) % 7); }
+
+/** A date at w[i]: today, tomorrow, friday, next friday, next week, in 3 days, oct 14, 14 october, 10/14, end of week. */
+function tryDate(w, i, today, inText) {
+  const W = k => (w[k] || "").replace(/[,.]/g, "");
+  const x = W(i);
+  if (x === "today" || x === "tod" || x === "tonight") return { date: today, used: 1 };
+  if (x === "tomorrow" || x === "tmr" || x === "tom") return { date: addDays(today, 1), used: 1 };
+  if (x === "eow") return { date: endOfWeek(today), used: 1 };
+  if (x === "eom") return { date: new Date(today.getFullYear(), today.getMonth() + 1, 0), used: 1 };
+  if (x === "end" && W(i + 1) === "of") {
+    if (W(i + 2) === "week") return { date: endOfWeek(today), used: 3 };
+    if (W(i + 2) === "month") return { date: new Date(today.getFullYear(), today.getMonth() + 1, 0), used: 3 };
+  }
+  if (x === "next") {
+    if (W(i + 1) === "week") return { date: addDays(today, 7 - (today.getDay() + 6) % 7), used: 2 };
+    if (W(i + 1) === "month") return { date: new Date(today.getFullYear(), today.getMonth() + 1, 1), used: 2 };
+    const d = weekday(W(i + 1)); if (d !== null) return { date: nextWeekday(today, d, true), used: 2 };
+  }
+  if (x === "in" && /^\d+$/.test(W(i + 1))) {
+    const n = +W(i + 1), u = W(i + 2);
+    if (n > 0 && n < 400) {
+      if (u === "day" || u === "days") return { date: addDays(today, n), used: 3 };
+      if (u === "week" || u === "weeks") return { date: addDays(today, 7 * n), used: 3 };
+      if (u === "month" || u === "months") { const d = new Date(today); d.setMonth(d.getMonth() + n); return { date: d, used: 3 }; }
+    }
+  }
+  const wd = weekday(x);
+  if (wd !== null && !x.endsWith("s") && !(inText && (x === "sat" || x === "sun"))) return { date: nextWeekday(today, wd, false), used: 1 };
+  const m1 = month(x), d1 = dayNumber(W(i + 1)); if (m1 !== null && d1 !== null) return { date: upcoming(today, m1, d1), used: 2 };
+  const d2 = dayNumber(x), m2 = month(W(i + 1)); if (d2 !== null && m2 !== null) return { date: upcoming(today, m2, d2), used: 2 };
+  const slash = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/.exec(x);
+  if (slash) {
+    const mm = +slash[1] - 1, dd = +slash[2];
+    if (mm >= 0 && mm < 12 && dd >= 1 && dd <= 31) {
+      if (slash[3]) { let y = +slash[3]; if (y < 100) y += 2000; return { date: new Date(y, mm, dd), used: 1 }; }
+      return { date: upcoming(today, mm, dd), used: 1 };
+    }
+  }
+  return null;
+}
+
+/** A time at w[i]: 3pm, 3:30pm, "at 15:30", "at 3" (afternoon), "at noon". */
+function tryTime(w, i) {
+  const W = k => (w[k] || "").replace(/[,.]/g, "");
+  let k = i; const at = W(k) === "at"; if (at) k++;
+  const x = W(k);
+  if (x === "noon") return { h: 12, m: 0, used: k - i + 1 };
+  const spaced = W(k + 1) === "am" || W(k + 1) === "pm";
+  const text = spaced ? x + W(k + 1) : x;
+  const pm = text.endsWith("pm"), am = text.endsWith("am");
+  const core = pm || am ? text.slice(0, -2) : text;
+  const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(core);
+  if (!m) return null;
+  let h = +m[1]; const min = m[2] ? +m[2] : 0;
+  if (!pm && !am && !at) return null; // a bare number ("call 3 people") stays as text
+  if (min > 59) return null;
+  if (pm && h < 12) h += 12;
+  if (am && h === 12) h = 0;
+  if (!pm && !am && !m[2] && h >= 1 && h <= 7) h += 12;
+  if (h > 23) return null;
+  return { h, m: min, used: k - i + (spaced ? 2 : 1) };
+}
+
+// ---------- Repeats (same rules as Focus) ----------
+
+function parseRepeatAt(w, start, anchor) {
+  const W = k => w[k] || "";
+  const r = { type: "", interval: 1, days: [], monthDay: 0, ordinal: 0, weekday: 0, weekdaysOnly: false };
+  let i = start;
+  switch (W(i)) {
+    case "daily": r.type = "days"; return { rule: r, used: 1 };
+    case "weekdays": case "workdays": r.type = "days"; r.weekdaysOnly = true; return { rule: r, used: 1 };
+    case "weekly": r.type = "weeks"; r.days = [anchor.getDay()]; i++; break;
+    case "biweekly": r.type = "weeks"; r.interval = 2; r.days = [anchor.getDay()]; i++; break;
+    case "monthly": r.type = "monthDay"; r.monthDay = anchor.getDate(); i++; break;
+    case "yearly": case "annually": r.type = "years"; return { rule: r, used: 1 };
+    case "every": case "each": i++; break;
+    default: return null;
+  }
+  if (W(start) === "every" || W(start) === "each") {
+    if (W(i) === "other") { r.interval = 2; i++; }
+    else if (/^\d+$/.test(W(i)) && +W(i) > 0 && +W(i) < 100) { r.interval = +W(i); i++; }
+    const unit = W(i);
+    if (unit === "day" || unit === "days") { r.type = "days"; i++; }
+    else if (["weekday", "weekdays", "workday", "workdays"].includes(unit)) { r.type = "days"; r.weekdaysOnly = true; i++; }
+    else if (unit === "week" || unit === "weeks") { r.type = "weeks"; i++; r.days = [anchor.getDay()]; }
+    else if (unit === "month" || unit === "months") { r.type = "monthDay"; r.monthDay = anchor.getDate(); i++; }
+    else if (unit === "year" || unit === "years") { r.type = "years"; i++; }
+    else if (ordinal(unit) !== null) {
+      const ord = ordinal(unit), after = W(i + 1), dow = weekday(after);
+      if (dow !== null) { r.type = "monthWeekday"; r.ordinal = ord; r.weekday = dow; i += 2; }
+      else if (ord === -1 && (after === "weekday" || after === "workday")) { r.type = "monthLastWeekday"; i += 2; }
+      else if (ord === -1 && after === "day") { r.type = "monthDay"; r.monthDay = -1; i += 2; }
+      else return null;
+      return { rule: r, used: i - start };
+    }
+    else if (dayNumber(unit) !== null) { r.type = "monthDay"; r.monthDay = dayNumber(unit); i++; return { rule: r, used: i - start }; }
+    else if (weekday(unit) !== null) { r.type = "weeks"; }
+    else return null;
+  }
+  if (r.type === "weeks") {
+    let j = W(i) === "on" ? i + 1 : i; const days = [];
+    while (weekday(W(j)) !== null) {
+      days.push(weekday(W(j))); j++;
+      if ((W(j) === "," || W(j) === "and") && weekday(W(j + 1)) !== null) j++;
+    }
+    if (days.length) { r.days = [...new Set(days)]; i = j; }
+  } else if (r.type === "monthDay" && W(i) === "on") {
+    let j = i + 1; if (W(j) === "the") j++;
+    if (dayNumber(W(j)) !== null) { r.monthDay = dayNumber(W(j)); i = j + 1; }
+    else if (ordinal(W(j)) !== null) {
+      const ord = ordinal(W(j)), dow = weekday(W(j + 1));
+      if (dow !== null) { r.type = "monthWeekday"; r.ordinal = ord; r.weekday = dow; i = j + 2; }
+      else if (ord === -1 && (W(j + 1) === "weekday" || W(j + 1) === "workday")) { r.type = "monthLastWeekday"; i = j + 2; }
+      else if (ord === -1 && W(j + 1) === "day") { r.monthDay = -1; i = j + 2; }
+    }
+  }
+  return { rule: r, used: i - start };
+}
+function parseRepeat(text, anchor) {
+  if (!text || !text.trim()) return null;
+  const w = words(text); const res = parseRepeatAt(w, 0, anchor || startOfDay(new Date()));
+  return res && res.used === w.length ? res.rule : null;
+}
+function startOfWeek(d) { return addDays(startOfDay(d), -((d.getDay() + 6) % 7)); }
+function nthWeekday(monthStart, dow, ord) {
+  const dim = daysInMonth(monthStart.getFullYear(), monthStart.getMonth()); const hits = [];
+  for (let i = 0; i < dim; i++) { const d = addDays(monthStart, i); if (d.getDay() === dow) hits.push(d); }
+  if (ord === -1) return hits[hits.length - 1];
+  return ord <= hits.length ? hits[ord - 1] : null;
+}
+function lastWeekdayOf(monthStart) {
+  let d = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+  while (d.getDay() === 0 || d.getDay() === 6) d = addDays(d, -1);
+  return d;
+}
+/** The first date strictly after `after` that the rule lands on. */
+function nextDate(r, after) {
+  const d = startOfDay(after);
+  switch (r.type) {
+    case "days": {
+      if (!r.weekdaysOnly) return addDays(d, r.interval);
+      let x = addDays(d, 1); while (x.getDay() === 0 || x.getDay() === 6) x = addDays(x, 1); return x;
+    }
+    case "weeks": {
+      const days = r.days.length ? r.days : [after.getDay()];
+      for (let k = 1; k <= 7; k++) {
+        const c = addDays(d, k); const same = +startOfWeek(c) === +startOfWeek(d);
+        if (days.includes(c.getDay()) && (same || r.interval === 1)) return c;
+        if (!same) break;
+      }
+      const ws = addDays(startOfWeek(d), 7 * r.interval);
+      for (let k = 0; k < 7; k++) { const c = addDays(ws, k); if (days.includes(c.getDay())) return c; }
+      return addDays(d, 7);
+    }
+    case "monthDay":
+      for (let m = 0; m <= 24; m++) {
+        if (m > 0 && m % r.interval !== 0) continue;
+        const ms = addMonths(new Date(d.getFullYear(), d.getMonth(), 1), m);
+        const dim = daysInMonth(ms.getFullYear(), ms.getMonth());
+        const c = new Date(ms.getFullYear(), ms.getMonth(), r.monthDay === -1 ? dim : Math.min(r.monthDay, dim));
+        if (c > d) return c;
+      }
+      return addMonths(d, r.interval);
+    case "monthWeekday":
+    case "monthLastWeekday":
+      for (let m = 0; m <= 24; m++) {
+        if (m > 0 && m % r.interval !== 0) continue;
+        const ms = addMonths(new Date(d.getFullYear(), d.getMonth(), 1), m);
+        const c = r.type === "monthLastWeekday" ? lastWeekdayOf(ms) : nthWeekday(ms, r.weekday, r.ordinal);
+        if (c && c > d) return c;
+      }
+      return addMonths(d, r.interval);
+    case "years": { const c = new Date(d); c.setFullYear(c.getFullYear() + r.interval); return c; }
+  }
+  return addDays(d, 1);
+}
+function describeRepeat(r) {
+  const cap = s => s[0].toUpperCase() + s.slice(1);
+  const every = r.interval === 1 ? "Every" : r.interval === 2 ? "Every other" : `Every ${r.interval}`;
+  const plural = u => r.interval > 2 ? u + "s" : u;
+  const sfx = n => [11, 12, 13].includes(n) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th");
+  const ord = o => o === -1 ? "last" : ORDINALS[o - 1];
+  const joinDays = ds => {
+    const n = [...ds].sort((a, b) => (a + 6) % 7 - (b + 6) % 7).map(i => cap(DAY_NAMES[i]));
+    return n.length <= 1 ? n.join("") : n.slice(0, -1).join(", ") + " and " + n[n.length - 1];
+  };
+  switch (r.type) {
+    case "days": return r.weekdaysOnly ? "Every weekday" : r.interval === 1 ? "Every day" : `${every} ${plural("day")}`;
+    case "weeks": return (r.interval === 1 ? "Every " : `${every} ${plural("week")} on `) + joinDays(r.days);
+    case "monthDay": return (r.interval === 1 ? "Every month" : `${every} ${plural("month")}`) + (r.monthDay === -1 ? " on the last day" : ` on the ${r.monthDay}${sfx(r.monthDay)}`);
+    case "monthWeekday": return (r.interval === 1 ? "Every month" : `${every} ${plural("month")}`) + ` on the ${ord(r.ordinal)} ${cap(DAY_NAMES[r.weekday])}`;
+    case "monthLastWeekday": return "Every month on the last weekday";
+    case "years": return r.interval === 1 ? "Every year" : `${every} ${plural("year")}`;
+  }
+  return "Repeats";
+}
+
+// ---------- Reading what you type (same shortcuts as Focus) ----------
+
+/** #tag, ! (high), !low, @today, due:fri, and everyday words: tomorrow, on friday, at 3pm, every friday. */
+function applyInput(task, input, today) {
+  today = startOfDay(today || new Date());
+  const orig = input.split(/\s+/).filter(Boolean), low = orig.map(x => x.toLowerCase());
+  const keep = []; let date = null, time = null, repeat = null, repeatText = "";
+  task.Tags = task.Tags || [];
+  for (let i = 0; i < orig.length; i++) {
+    const wd = orig[i], lw = low[i];
+    if (wd.length > 1 && wd[0] === "#") { task.Tags.push(wd.slice(1).replace(/[,.]+$/, "")); continue; }
+    if (lw === "!" || lw === "!high" || lw === "!!") { task.Priority = "High"; continue; }
+    if (lw === "!low") { task.Priority = "Low"; continue; }
+    if (lw === "@today") { task.PlannedFor = ymd(today); continue; }
+    if (lw.startsWith("due:")) { const r = tryDate(words(wd.slice(4)), 0, today, false); if (r) { date = r.date; continue; } }
+    if (!repeat && (lw === "every" || lw === "each")) {
+      const r = parseRepeatAt(low, i, date || today);
+      if (r && r.used > 0) { repeat = r.rule; repeatText = low.slice(i, i + r.used).join(" "); i += r.used - 1; continue; }
+    }
+    if (!time) { const t = tryTime(low, i); if (t) { time = t; i += t.used - 1; continue; } }
+    const skip = ["on", "by", "due"].includes(lw) ? 1 : 0;
+    if (!date) { const r = tryDate(low, i + skip, today, true); if (r) { date = r.date; i += skip + r.used - 1; continue; } }
+    keep.push(wd);
+  }
+  if (repeat) {
+    task.Repeat = repeatText;
+    if (!date) date = repeat.type === "days" && !repeat.weekdaysOnly ? today : nextDate(repeat, addDays(today, -1));
+  }
+  if (time) { if (!date) date = today; const r = new Date(date); r.setHours(time.h, time.m, 0, 0); task.RemindAt = iso(r); }
+  if (date) task.Due = iso(startOfDay(date));
+  task.Text = keep.join(" ");
+  const seen = new Set();
+  task.Tags = task.Tags.filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
+  return task;
+}
+
+// ---------- Task facts ----------
+
+function dueOf(t) { const d = parseDate(t.Due); return d ? startOfDay(d) : null; }
+function isOverdue(t, today) { const d = dueOf(t); return !!d && d < today; }
+function isDueToday(t, today) { return sameDay(dueOf(t), today); }
+function isPlannedToday(t, today) { return t.PlannedFor === ymd(today); }
+function isSnoozed(t, today) { const s = parseDate(t.SnoozedUntil); return !!s && startOfDay(s) > today; }
+function ageDays(t, today) { const c = parseDate(t.CreatedAt); return c ? Math.round((today - startOfDay(c)) / 864e5) : 0; }
+/** Same order as Focus: overdue, due today, today's picks (high first), high priority, by due date. */
+function rank(t, today) {
+  const high = t.Priority === "High", lowp = t.Priority === "Low";
+  return isOverdue(t, today) ? 0 : isDueToday(t, today) ? 1 : isPlannedToday(t, today) && high ? 2 : isPlannedToday(t, today) ? 3
+       : high ? 4 : lowp ? 7 : dueOf(t) ? 5 : 6;
+}
+function sortTasks(list, today) {
+  return [...list].sort((a, b) => rank(a, today) - rank(b, today) || ((dueOf(a) || 8.64e15) - (dueOf(b) || 8.64e15)));
+}
+function estimateLabel(e) { return !e ? "" : e < 1 ? "quick" : e === 1 ? "1 session" : `${Math.round(e)} sessions`; }
+function details(t, today, projects) {
+  const parts = [], fmt = (d, o) => d.toLocaleDateString([], o);
+  const p = projects && projects.find(x => x.Id === t.Project); if (p) parts.push(p.Name);
+  const d = dueOf(t);
+  if (d && d < today) parts.push(`Overdue (was due ${fmt(d, { weekday: "short", month: "short", day: "numeric" })})`);
+  else if (sameDay(d, today)) parts.push("Due today");
+  else if (d) parts.push(d < addDays(today, 7) ? `Due ${fmt(d, { weekday: "long" })}` : `Due ${fmt(d, { month: "short", day: "numeric" })}`);
+  if (isSnoozed(t, today)) parts.push(`Snoozed until ${fmt(parseDate(t.SnoozedUntil), { weekday: "short", month: "short", day: "numeric" })}`);
+  const r = parseDate(t.RemindAt);
+  if (r) parts.push(`Reminder ${sameDay(r, today) ? "" : fmt(r, { weekday: "short" }) + " "}${r.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`);
+  if (t.Repeat) { const rule = parseRepeat(t.Repeat, d || today); parts.push(rule ? describeRepeat(rule) : "Repeats"); }
+  if (t.Status === "doing") parts.push("Doing");
+  if (t.Status === "waiting") parts.push(t.WaitingOn ? `Waiting on ${t.WaitingOn}` : "Waiting");
+  if (t.Subtasks && t.Subtasks.length) parts.push(`${t.Subtasks.filter(s => s.Done).length} of ${t.Subtasks.length} steps`);
+  if (t.Notes && t.Notes.trim()) parts.push("Has notes");
+  if (t.Estimate > 0) parts.push(estimateLabel(t.Estimate));
+  if (t.PlannedFor && !isPlannedToday(t, today)) {
+    const pd = parseYmd(t.PlannedFor);
+    if (pd && pd > today) parts.push(`Planned ${fmt(pd, { weekday: "short", month: "short", day: "numeric" })}`);
+  }
+  (t.Tags || []).forEach(x => parts.push("#" + x));
+  return parts.join(", ");
+}
+
+/** Finishing a repeating task: the next one, with its new due date (and reminder), like Focus. */
+function nextRepeat(t, today) {
+  const rule = t.Repeat ? parseRepeat(t.Repeat, dueOf(t) || today) : null;
+  if (!rule) return null;
+  let next = nextDate(rule, dueOf(t) || today);
+  while (next < today) next = nextDate(rule, next);
+  const again = JSON.parse(JSON.stringify(t));
+  again.Id = newId(); again.Due = iso(next); again.From = "Repeats: " + describeRepeat(rule);
+  const r = parseDate(t.RemindAt);
+  again.RemindAt = r ? iso(new Date(next.getFullYear(), next.getMonth(), next.getDate(), r.getHours(), r.getMinutes())) : null;
+  again.Subtasks = (t.Subtasks || []).map(s => ({ Text: s.Text, Done: false }));
+  again.PlannedFor = ""; again.SnoozedUntil = null; again.Status = ""; again.Spent = 0; again.CreatedAt = iso(new Date());
+  return again;
+}
+function newId() {
+  const s = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
+          : (Date.now().toString(16) + Math.random().toString(16).slice(2) + "00000000000000000000000000000000");
+  return s.replace(/-/g, "").slice(0, 32);
+}
+if (typeof module !== "undefined") module.exports = { applyInput, parseRepeat, nextDate, describeRepeat, tryDate, tryTime, details, rank, nextRepeat, iso, ymd, startOfDay, addDays };
+</script>
+
+<!-- ================= The app ================= -->
+<script>
+// ================= Settings =================
+// Paste the "Application (client) ID" from your app registration here (see SETUP.md).
+const CLIENT_ID = "PASTE-YOUR-CLIENT-ID-HERE";
+// The folder Focus syncs through, at the top of your OneDrive.
+const FOLDER = "Focus";
+// ============================================
+
+const SCOPES = ["Files.ReadWrite"];
+const GRAPH = "https://graph.microsoft.com/v1.0/me/drive/root:/";
+const $ = id => document.getElementById(id);
+
+let client, account;
+let bin = [], resolved = [], projects = [];
+let view = "today", chip = "all", search = "", busy = false;
+
+const today = () => startOfDay(new Date());
+function setStatus(text, isError) { $("status").textContent = text || ""; $("status").classList.toggle("error", !!isError); }
+function toast(text) {
+  const t = document.createElement("div"); t.className = "toast"; t.textContent = text; document.body.append(t);
+  setTimeout(() => t.remove(), 2200);
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+// ---------- Signing in ----------
+
+async function start() {
+  if (CLIENT_ID.startsWith("PASTE")) { setStatus("This page isn't set up yet: add your client ID (see SETUP.md).", true); return; }
+  client = new window.msal.PublicClientApplication({
+    auth: { clientId: CLIENT_ID, authority: "https://login.microsoftonline.com/common", redirectUri: location.origin + location.pathname },
+    cache: { cacheLocation: "localStorage" }
+  });
+  try { const r = await client.handleRedirectPromise(); account = (r && r.account) || client.getAllAccounts()[0]; }
+  catch (e) { setStatus("Sign-in problem: " + e.message, true); }
+  showSignedIn(!!account);
+  if (account) await reload();
+}
+function showSignedIn(on) {
+  $("signedOut").classList.toggle("hidden", on);
+  $("app").classList.toggle("hidden", !on);
+  $("addbar").classList.toggle("hidden", !on);
+  $("signout").classList.toggle("hidden", !on);
+}
+async function token() {
+  try { return (await client.acquireTokenSilent({ scopes: SCOPES, account })).accessToken; }
+  catch { await client.acquireTokenRedirect({ scopes: SCOPES, account }); throw new Error("Signing in again..."); }
+}
+
+// ---------- The Focus files in OneDrive ----------
+
+async function readFile(name) {
+  const res = await fetch(GRAPH + encodeURIComponent(FOLDER) + "/" + name + ":/content",
+    { headers: { Authorization: "Bearer " + await token() }, cache: "no-store" });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error(`Couldn't read ${name} (${res.status})`);
+  const text = await res.text();
+  try { const data = JSON.parse(text); return Array.isArray(data) ? data : []; }
+  catch { throw new Error(`${name} is busy syncing; try again in a moment.`); }
+}
+async function writeFile(name, data) {
+  const res = await fetch(GRAPH + encodeURIComponent(FOLDER) + "/" + name + ":/content", {
+    method: "PUT", headers: { Authorization: "Bearer " + await token(), "Content-Type": "application/json" },
+    body: JSON.stringify(data, null, 2)
+  });
+  if (!res.ok) throw new Error(`Couldn't save ${name} (${res.status})`);
+}
+async function reload() {
+  try {
+    setStatus("Loading...");
+    [bin, resolved, projects] = await Promise.all([readFile("task-bin.json"), readFile("resolved-tasks.json"), readFile("projects.json")]);
+    render();
+    setStatus("Up to date, " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+  } catch (e) { setStatus(e.message, true); }
+}
+/** Every change is made on the newest copy of the files, so edits from your computers aren't lost. */
+async function change(fn, message) {
+  if (busy) { toast("One moment..."); return; }
+  busy = true;
+  try {
+    setStatus("Saving...");
+    const [b, r, p] = await Promise.all([readFile("task-bin.json"), readFile("resolved-tasks.json"), readFile("projects.json")]);
+    const touched = fn(b, r, p) || {};
+    for (const t of b) if (!t.CreatedAt) t.CreatedAt = iso(new Date());
+    await writeFile("task-bin.json", b);
+    if (touched.resolved) await writeFile("resolved-tasks.json", r);
+    if (touched.projects) await writeFile("projects.json", p);
+    bin = b; resolved = r; projects = p;
+    render();
+    setStatus("Saved. Your computers pick it up within a minute or so.");
+    if (message) toast(message);
+  } catch (e) { setStatus(e.message, true); }
+  finally { busy = false; }
+}
+
+// ---------- Lists ----------
+
+function visible(t) {
+  const d = today();
+  if (search) {
+    const q = search.toLowerCase();
+    const hit = (t.Text || "").toLowerCase().includes(q) || (t.Notes || "").toLowerCase().includes(q) ||
+      (t.Tags || []).some(x => x.toLowerCase().includes(q.replace(/^#/, ""))) ||
+      (t.Subtasks || []).some(s => (s.Text || "").toLowerCase().includes(q));
+    if (!hit) return false;
+  }
+  if (chip === "overdue" && !isOverdue(t, d)) return false;
+  if (chip === "high" && t.Priority !== "High") return false;
+  if (chip === "nodate" && t.Due) return false;
+  if (chip === "age7" && ageDays(t, d) < 7) return false;
+  if (chip.startsWith("project:") && t.Project !== chip.slice(8)) return false;
+  if (chip.startsWith("#") && !(t.Tags || []).some(x => x.toLowerCase() === chip.slice(1).toLowerCase())) return false;
+  return true;
+}
+function isToday(t) { const d = today(); return isPlannedToday(t, d) || isDueToday(t, d) || isOverdue(t, d); }
+
+function render() {
+  const d = today();
+  const monday = addDays(d, -((d.getDay() + 6) % 7));
+  const doneToday = resolved.filter(r => (parseDate(r.ResolvedAt) || 0) >= d).length;
+  const doneWeek = resolved.filter(r => (parseDate(r.ResolvedAt) || 0) >= monday).length;
+  $("stats").innerHTML = `<b>${doneToday}</b> done today, <b>${doneWeek}</b> this week, <b>${bin.length}</b> to do`;
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
+  renderChips();
+  const list = $("list"); list.innerHTML = "";
+
+  if (view === "done") return renderDone(list);
+  const tasks = bin.filter(t => view === "upcoming" || !isSnoozed(t, d)).filter(visible);
+  if (view === "upcoming") return renderUpcoming(list, tasks);
+  const shown = sortTasks(view === "today" ? tasks.filter(isToday) : tasks, d);
+  if (!shown.length) {
+    list.innerHTML = `<p class="empty">${view === "today"
+      ? "Nothing set for today. Add a task below, or open one in All and choose Do it: Today."
+      : "No tasks here."}</p>`;
+    return;
+  }
+  const ul = document.createElement("ul"); shown.forEach(t => ul.append(row(t))); list.append(ul);
+}
+function renderChips() {
+  const d = today(), chips = [["all", "All"], ["overdue", `Overdue (${bin.filter(t => isOverdue(t, d)).length})`],
+    ["high", "High priority"], ["nodate", "No date"], ["age7", "+ one week old"]];
+  projects.forEach(p => chips.push(["project:" + p.Id, `<span class="dot" style="background:${esc(p.Color)}"></span>${esc(p.Name)}`]));
+  const tags = [...new Set(bin.flatMap(t => t.Tags || []).map(x => x.toLowerCase()))].sort();
+  tags.forEach(x => chips.push(["#" + x, "#" + esc(x)]));
+  if (!chips.some(c => c[0] === chip)) chip = "all";
+  $("chips").classList.toggle("hidden", view === "done");
+  $("chips").innerHTML = chips.map(([k, l]) => `<button data-chip="${esc(k)}" aria-pressed="${k === chip}">${l}</button>`).join("");
+  $("chips").querySelectorAll("button").forEach(b => b.onclick = () => { chip = b.dataset.chip; render(); });
+}
+function row(t) {
+  const d = today(), li = document.createElement("li"); li.className = "task";
+  const check = document.createElement("button");
+  check.className = "check" + (t.Priority === "High" ? " high" : t.Priority === "Low" ? " low" : "");
+  check.textContent = "✓"; check.setAttribute("aria-label", "Finish");
+  check.onclick = () => { check.classList.add("done"); finish(t.Id); };
+  const body = document.createElement("div"); body.className = "body";
+  const det = details(t, d, projects);
+  body.innerHTML = `<div class="title">${esc(t.Text)}</div>` + (det ? `<div class="details${isOverdue(t, d) ? " overdue" : ""}">${esc(det)}</div>` : "");
+  body.onclick = () => openEditor(t.Id);
+  li.append(check, body); return li;
+}
+function renderUpcoming(list, tasks) {
+  const d = today(), groups = new Map();
+  const dateOf = t => {
+    if (isSnoozed(t, d)) return startOfDay(parseDate(t.SnoozedUntil));
+    const p = parseYmd(t.PlannedFor); if (p && p > d) return p;
+    return dueOf(t);
+  };
+  const add = (h, t) => { if (!groups.has(h)) groups.set(h, []); groups.get(h).push(t); };
+  sortTasks(tasks, d).map(t => [t, dateOf(t)]).filter(x => x[1]).sort((a, b) => a[1] - b[1]).forEach(([t, when]) => {
+    if (when < d) add("Overdue", t);
+    else if (when < addDays(d, 14)) add(sameDay(when, d) ? "Today" : sameDay(when, addDays(d, 1)) ? "Tomorrow"
+      : when.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }), t);
+    else add("Later", t);
+  });
+  if (!groups.size) { list.innerHTML = `<p class="empty">Nothing scheduled. Give tasks a due date or snooze them to see them here.</p>`; return; }
+  const order = ["Overdue", ...[...groups.keys()].filter(k => k !== "Overdue" && k !== "Later"), "Later"];
+  for (const k of order) if (groups.has(k)) {
+    const h = document.createElement("h2"); h.textContent = k; list.append(h);
+    const ul = document.createElement("ul"); groups.get(k).forEach(t => ul.append(row(t))); list.append(ul);
+  }
+}
+function renderDone(list) {
+  const d = today(), groups = new Map();
+  resolved.filter(r => !search || (r.Text || "").toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => (parseDate(b.ResolvedAt) || 0) - (parseDate(a.ResolvedAt) || 0)).slice(0, 300).forEach(r => {
+      const day = startOfDay(parseDate(r.ResolvedAt) || 0);
+      const h = sameDay(day, d) ? "Today" : sameDay(day, addDays(d, -1)) ? "Yesterday"
+        : day.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+      if (!groups.has(h)) groups.set(h, []); groups.get(h).push(r);
+    });
+  if (!groups.size) { list.innerHTML = `<p class="empty">Nothing finished yet.</p>`; return; }
+  for (const [h, items] of groups) {
+    const head = document.createElement("h2"); head.textContent = h; list.append(head);
+    const ul = document.createElement("ul");
+    items.forEach(r => {
+      const li = document.createElement("li"); li.className = "task";
+      li.innerHTML = `<span class="check done">✓</span><div class="body"><div class="title" style="text-decoration:line-through;color:var(--muted)">${esc(r.Text)}</div></div>`;
+      const back = document.createElement("button"); back.className = "link"; back.textContent = "Reopen";
+      back.onclick = () => reopen(r.Id); li.append(back); ul.append(li);
+    });
+    list.append(ul);
+  }
+}
+
+// ---------- Actions ----------
+
+function add(input) {
+  const d = today();
+  const task = applyInput({
+    Id: newId(), Text: "", From: "Added on phone, " + d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+    Priority: "Normal", Tags: [], Subtasks: [], Notes: "", Repeat: "", Status: "", WaitingOn: "", Project: "", PlannedFor: "",
+    Estimate: 0, Spent: 0, CreatedAt: iso(new Date())
+  }, input, d);
+  if (!task.Text) return;
+  if (view === "today" && !task.PlannedFor && !task.Due) task.PlannedFor = ymd(d); // added on Today: it's for today
+  if (chip.startsWith("project:")) task.Project = chip.slice(8);
+  change(b => { b.push(task); }, "Added");
+}
+function finish(id) {
+  change((b, r) => {
+    const i = b.findIndex(x => x.Id === id); if (i < 0) return {};
+    const [t] = b.splice(i, 1);
+    r.push({ Id: newId(), Text: t.Text, From: t.From || "", ResolvedAt: iso(new Date()), Spent: t.Spent || 0, Estimate: t.Estimate || 0, Project: t.Project || "" });
+    const again = nextRepeat(t, today()); if (again) b.push(again);
+    return { resolved: true };
+  }, "Done ✓");
+}
+function reopen(id) {
+  change((b, r) => {
+    const i = r.findIndex(x => x.Id === id); if (i < 0) return {};
+    const [t] = r.splice(i, 1);
+    b.push({ Id: newId(), Text: t.Text, From: "Reopened on phone", Priority: "Normal", Tags: [], Subtasks: [], Project: t.Project || "", CreatedAt: iso(new Date()) });
+    return { resolved: true };
+  }, "Back in your list");
+}
+
+// ---------- Editing a task ----------
+
+function openEditor(id) {
+  const t = bin.find(x => x.Id === id); if (!t) return;
+  const d = today(), due = dueOf(t), remind = parseDate(t.RemindAt), snooze = parseDate(t.SnoozedUntil);
+  const planned = t.PlannedFor || "", tdy = ymd(d), tmr = ymd(addDays(d, 1));
+  const seg = (name, options, value) => `<div class="seg" data-seg="${name}">` +
+    options.map(([v, l]) => `<button type="button" data-v="${esc(v)}" aria-pressed="${String(v) === String(value)}">${l}</button>`).join("") + "</div>";
+  const steps = JSON.parse(JSON.stringify(t.Subtasks || []));
+  const planChoice = planned === "" ? "" : planned === tdy || planned === tmr ? planned : "other";
+  const card = $("sheetCard");
+  card.innerHTML = `
+    <label>Task</label><textarea id="eText" rows="2">${esc(t.Text)}</textarea>
+    <label>Do it</label>${seg("plan", [["", "Any time"], [tdy, "Today"], [tmr, "Tomorrow"], ["other", "Pick a day"]], planChoice)}
+    <input id="ePlanDay" type="date" class="${planChoice === "other" ? "" : "hidden"}" value="${esc(planChoice === "other" ? planned : "")}" style="margin-top:6px">
+    <label>Priority</label>${seg("prio", [["High", "High"], ["Normal", "Normal"], ["Low", "Low"]], t.Priority || "Normal")}
+    <div class="row">
+      <div><label>Due date</label><input id="eDue" type="date" value="${due ? ymd(due) : ""}"></div>
+      <div><label>Reminder</label><input id="eRemind" type="datetime-local" value="${remind ? iso(remind).slice(0, 16) : ""}"></div>
+    </div>
+    <label>Repeats</label><input id="eRepeat" value="${esc(t.Repeat || "")}" placeholder="every friday, weekdays, every month on the 15th">
+    <div class="hint" id="eRepeatHint"></div>
+    <label>Project</label><select id="eProject"><option value="">None</option>${projects.map(p =>
+      `<option value="${esc(p.Id)}" ${p.Id === t.Project ? "selected" : ""}>${esc(p.Name)}</option>`).join("")}<option value="__new">+ New project...</option></select>
+    <label>Tags</label><input id="eTags" value="${esc((t.Tags || []).join(", "))}" placeholder="client, admin">
+    <label>Steps</label><ul class="steps" id="eSteps"></ul>
+    <input id="eStepNew" placeholder="Add a step and press Enter" enterkeyhint="done">
+    <label>Notes</label><textarea id="eNotes">${esc(t.Notes || "")}</textarea>
+    <label>Estimate (focus sessions)</label>${seg("est", [[0, "Not sure"], [0.34, "Quick"], [1, "1"], [2, "2"], [3, "3"], [4, "4"]], t.Estimate || 0)}
+    <label>Status</label>${seg("status", [["", "To do"], ["doing", "Doing"], ["waiting", "Waiting"]], t.Status || "")}
+    <input id="eWaiting" class="${t.Status === "waiting" ? "" : "hidden"}" value="${esc(t.WaitingOn || "")}" placeholder="Waiting on whom?" style="margin-top:6px">
+    <label>Snooze until (hidden from lists until then)</label><input id="eSnooze" type="date" value="${snooze && snooze > d ? ymd(snooze) : ""}">
+    <div class="sheetbar">
+      <button type="button" id="eDelete">Delete</button>
+      <span><button type="button" id="eCancel">Cancel</button> <button type="button" class="primary" id="eSave">Save</button></span>
+    </div>`;
+  $("sheet").classList.remove("hidden");
+
+  card.querySelectorAll(".seg").forEach(s => s.querySelectorAll("button").forEach(b => b.onclick = () => {
+    s.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", "false"));
+    b.setAttribute("aria-pressed", "true");
+    if (s.dataset.seg === "plan") $("ePlanDay").classList.toggle("hidden", b.dataset.v !== "other");
+    if (s.dataset.seg === "status") $("eWaiting").classList.toggle("hidden", b.dataset.v !== "waiting");
+  }));
+  const segValue = name => { const b = card.querySelector(`[data-seg="${name}"] [aria-pressed="true"]`); return b ? b.dataset.v : ""; };
+  const repeatHint = () => {
+    const txt = $("eRepeat").value.trim(), rule = parseRepeat(txt, $("eDue").value ? parseYmd($("eDue").value) : d);
+    $("eRepeatHint").textContent = !txt ? "Doesn't repeat" : rule ? describeRepeat(rule) : "Not understood yet";
+  };
+  $("eRepeat").oninput = repeatHint; repeatHint();
+  const drawSteps = () => {
+    $("eSteps").innerHTML = "";
+    steps.forEach((s, i) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<input type="checkbox" ${s.Done ? "checked" : ""} style="width:auto"><span>${esc(s.Text)}</span><button type="button" class="icon">✕</button>`;
+      li.querySelector("input").onchange = e => { s.Done = e.target.checked; };
+      li.querySelector("button").onclick = () => { steps.splice(i, 1); drawSteps(); };
+      $("eSteps").append(li);
+    });
+  };
+  drawSteps();
+  $("eStepNew").onkeydown = e => {
+    if (e.key !== "Enter") return;
+    e.preventDefault(); const v = e.target.value.trim();
+    if (v) { steps.push({ Text: v, Done: false }); e.target.value = ""; drawSteps(); }
+  };
+  let newProject = null;
+  $("eProject").onchange = e => {
+    if (e.target.value !== "__new") return;
+    const name = (prompt("New project name") || "").trim();
+    if (!name) { e.target.value = t.Project || ""; return; }
+    const pal = ["#DC4C3E", "#246FE0", "#058527", "#EB8909", "#884DFF", "#14AAF5", "#B8256F", "#6ACCBC"];
+    newProject = { Id: newId(), Name: name, Color: pal[projects.length % pal.length] };
+    const opt = document.createElement("option"); opt.value = newProject.Id; opt.textContent = name;
+    e.target.insertBefore(opt, e.target.lastElementChild); e.target.value = newProject.Id;
+  };
+  const close = () => $("sheet").classList.add("hidden");
+  $("eCancel").onclick = close;
+  $("sheet").onclick = e => { if (e.target.id === "sheet") close(); };
+  $("eDelete").onclick = () => {
+    if (!confirm("Delete this task?")) return;
+    close(); change(b => { const i = b.findIndex(x => x.Id === id); if (i >= 0) b.splice(i, 1); }, "Deleted");
+  };
+  $("eSave").onclick = () => {
+    const text = $("eText").value.trim(); if (!text) { toast("The task needs some text"); return; }
+    const repeat = $("eRepeat").value.trim();
+    if (repeat && !parseRepeat(repeat, d)) { toast("Couldn't read the repeat"); return; }
+    let plan = segValue("plan"); if (plan === "other") plan = $("ePlanDay").value || "";
+    const status = segValue("status");
+    const edits = {
+      Text: text, PlannedFor: plan, Priority: segValue("prio") || "Normal",
+      Due: $("eDue").value ? iso(parseYmd($("eDue").value)) : null,
+      RemindAt: $("eRemind").value ? $("eRemind").value + ":00" : null,
+      Repeat: repeat, Project: $("eProject").value === "__new" ? "" : $("eProject").value,
+      Tags: $("eTags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean),
+      Subtasks: steps, Notes: $("eNotes").value, Estimate: +segValue("est") || 0,
+      Status: status, WaitingOn: status === "waiting" ? $("eWaiting").value.trim() : "",
+      SnoozedUntil: $("eSnooze").value ? iso(parseYmd($("eSnooze").value)) : null
+    };
+    if (repeat && !edits.Due) edits.Due = iso(nextDate(parseRepeat(repeat, d), addDays(d, -1)));
+    if (status === "waiting" && t.Status !== "waiting") edits.WaitingSince = iso(new Date());
+    const projectToAdd = newProject && edits.Project === newProject.Id ? newProject : null;
+    close();
+    change((b, r, p) => {
+      const x = b.find(y => y.Id === id); if (!x) return {};
+      Object.assign(x, edits);
+      if (projectToAdd && !p.some(q => q.Id === projectToAdd.Id)) { p.push(projectToAdd); return { projects: true }; }
+      return {};
+    }, "Saved");
+  };
+}
+
+// ---------- Wiring up ----------
+
+$("signin").onclick = () => client.loginRedirect({ scopes: SCOPES });
+$("signout").onclick = () => client.logoutRedirect({ account });
+$("refresh").onclick = reload;
+$("searchBtn").onclick = () => {
+  const box = $("search"); box.classList.toggle("hidden");
+  if (!box.classList.contains("hidden")) box.focus(); else { search = ""; box.value = ""; render(); }
+};
+$("search").oninput = e => { search = e.target.value.trim(); render(); };
+$("tabs").querySelectorAll("button").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
+$("addForm").onsubmit = e => { e.preventDefault(); const v = $("newTask").value.trim(); if (!v) return; $("newTask").value = ""; add(v); };
+// Get the latest whenever you come back to the page (unless you're in the middle of editing).
+document.addEventListener("visibilitychange", () => { if (!document.hidden && account && $("sheet").classList.contains("hidden")) reload(); });
+
+start();
+</script>
+</body>
+</html>
