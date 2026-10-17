@@ -247,18 +247,46 @@ function describeRepeat(r) {
 
 // ---------- Reading what you type (same shortcuts as Focus) ----------
 
-/** #tag, ! (high), !low, @today, due:fri, and everyday words: tomorrow, on friday, at 3pm, every friday. */
-function applyInput(task, input, today) {
+/**
+ * The same shortcuts as Focus on your computer:
+ * @label (a tag), #Project or its shortcut (creates the project if it's new), /Section (existing ones only),
+ * ! (high), !low, due:fri, and everyday words: tomorrow, on friday, at 3pm, every friday.
+ * `projects` is the project list; a project created by #Name is added to it and returned as `created`.
+ */
+function applyInput(task, input, today, projects) {
   today = startOfDay(today || new Date());
+  projects = projects || [];
   const orig = input.split(/\s+/).filter(Boolean), low = orig.map(x => x.toLowerCase());
-  const keep = []; let date = null, time = null, repeat = null, repeatText = "";
+  const keep = []; let date = null, time = null, repeat = null, repeatText = "", sectionWanted = "", created = null, notice = "";
+  const trimP = s => s.replace(/^[,.]+|[,.]+$/g, "");
+  const match = text => {
+    const t = text.trim().toLowerCase(); if (!t) return null;
+    return projects.find(p => (p.Aliases || []).some(a => a.toLowerCase() === t)) || projects.find(p => (p.Name || "").toLowerCase() === t) || null;
+  };
   task.Tags = task.Tags || [];
   for (let i = 0; i < orig.length; i++) {
     const wd = orig[i], lw = low[i];
-    if (wd.length > 1 && wd[0] === "#") { task.Tags.push(wd.slice(1).replace(/[,.]+$/, "")); continue; }
+    if (wd.length > 1 && wd[0] === "@") { task.Tags.push(trimP(wd.slice(1))); continue; }
+    if (wd.length > 1 && wd[0] === "#") {
+      // Longest existing project name or shortcut first ("#Client A" uses two words).
+      let found = null, used = 1;
+      for (let n = Math.min(6, orig.length - i); n >= 1 && !found; n--) {
+        const candidate = trimP(orig.slice(i, i + n).join(" ").slice(1));
+        const p = match(candidate); if (p) { found = p; used = n; }
+      }
+      if (!found) {
+        const name = trimP(wd.slice(1));
+        if (name) {
+          const pal = ["#DC4C3E", "#246FE0", "#058527", "#EB8909", "#884DFF", "#14AAF5", "#B8256F", "#6ACCBC"];
+          found = { Id: newId(), Name: name, Color: pal[projects.length % pal.length], Aliases: [], Sections: [] };
+          projects.push(found); created = found;
+        }
+      }
+      if (found) { task.Project = found.Id; i += used - 1; continue; }
+    }
+    if (wd.length > 1 && wd[0] === "/" && !wd.includes("//") && !/\d/.test(wd.slice(1))) { sectionWanted = trimP(wd.slice(1)); continue; }
     if (lw === "!" || lw === "!high" || lw === "!!") { task.Priority = "High"; continue; }
     if (lw === "!low") { task.Priority = "Low"; continue; }
-    if (lw === "@today") { task.PlannedFor = ymd(today); continue; }
     if (lw.startsWith("due:")) { const r = tryDate(words(wd.slice(4)), 0, today, false); if (r) { date = r.date; continue; } }
     if (!repeat && (lw === "every" || lw === "each")) {
       const r = parseRepeatAt(low, i, date || today);
@@ -269,6 +297,15 @@ function applyInput(task, input, today) {
     if (!date) { const r = tryDate(low, i + skip, today, true); if (r) { date = r.date; i += skip + r.used - 1; continue; } }
     keep.push(wd);
   }
+  if (sectionWanted) {
+    const project = projects.find(p => p.Id === task.Project);
+    const section = project && (project.Sections || []).find(x => (x.Name || "").toLowerCase() === sectionWanted.toLowerCase());
+    if (section) task.Section = section.Id;
+    else {
+      keep.push("/" + sectionWanted);
+      notice = project ? `No section named ${sectionWanted} in ${project.Name}.` : `/${sectionWanted} needs a project: add #Project before it.`;
+    }
+  }
   if (repeat) {
     task.Repeat = repeatText;
     if (!date) date = repeat.type === "days" && !repeat.weekdaysOnly ? today : nextDate(repeat, addDays(today, -1));
@@ -278,7 +315,7 @@ function applyInput(task, input, today) {
   task.Text = keep.join(" ");
   const seen = new Set();
   task.Tags = task.Tags.filter(t => t && !seen.has(t.toLowerCase()) && seen.add(t.toLowerCase()));
-  return task;
+  return { task, created, notice };
 }
 
 // ---------- Task facts ----------
@@ -287,6 +324,7 @@ function dueOf(t) { const d = parseDate(t.Due); return d ? startOfDay(d) : null;
 function isOverdue(t, today) { const d = dueOf(t); return !!d && d < today; }
 function isDueToday(t, today) { return sameDay(dueOf(t), today); }
 function isPlannedToday(t, today) { return t.PlannedFor === ymd(today); }
+function isUndated(t) { return !t.Due && !t.PlannedFor; }
 function isSnoozed(t, today) { const s = parseDate(t.SnoozedUntil); return !!s && startOfDay(s) > today; }
 function ageDays(t, today) { const c = parseDate(t.CreatedAt); return c ? Math.round((today - startOfDay(c)) / 864e5) : 0; }
 /** Same order as Focus: overdue, due today, today's picks (high first), high priority, by due date. */
@@ -301,7 +339,8 @@ function sortTasks(list, today) {
 function estimateLabel(e) { return !e ? "" : e < 1 ? "quick" : e === 1 ? "1 session" : `${Math.round(e)} sessions`; }
 function details(t, today, projects) {
   const parts = [], fmt = (d, o) => d.toLocaleDateString([], o);
-  const p = projects && projects.find(x => x.Id === t.Project); if (p) parts.push(p.Name);
+  const p = projects && projects.find(x => x.Id === t.Project);
+  if (p) { const sec = (p.Sections || []).find(x => x.Id === t.Section); parts.push(sec ? `${p.Name} / ${sec.Name}` : p.Name); }
   const d = dueOf(t);
   if (d && d < today) parts.push(`Overdue (was due ${fmt(d, { weekday: "short", month: "short", day: "numeric" })})`);
   else if (sameDay(d, today)) parts.push("Due today");
@@ -342,4 +381,4 @@ function newId() {
           : (Date.now().toString(16) + Math.random().toString(16).slice(2) + "00000000000000000000000000000000");
   return s.replace(/-/g, "").slice(0, 32);
 }
-if (typeof module !== "undefined") module.exports = { applyInput, parseRepeat, nextDate, describeRepeat, tryDate, tryTime, details, rank, nextRepeat, iso, ymd, startOfDay, addDays };
+if (typeof module !== "undefined") module.exports = { isUndated, applyInput, parseRepeat, nextDate, describeRepeat, tryDate, tryTime, details, rank, nextRepeat, iso, ymd, startOfDay, addDays };

@@ -94,6 +94,37 @@
   .sheetbar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
   .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 96px; background: var(--text); color: var(--bg);
            padding: 9px 16px; border-radius: 20px; font-size: 14px; z-index: 20; }
+
+  /* Themes (light or dark follows the phone) */
+  :root[data-theme="mono"] { --bg: #FAFAFA; --panel: #FFFFFF; --panel2: #F1F1F1; --line: #E2E2E2; --text: #111111; --muted: #6E6E6E;
+    --accent: #111111; --tint: #E6E6E6; --high: #111111; --normal: #8C8C8C; --low: #C9C9C9; }
+  :root[data-theme="calm"] { --bg: #F6F5F1; --panel: #FFFFFF; --panel2: #EEF1EC; --line: #E2E5DF; --text: #2C3A3A; --muted: #6F7D7B;
+    --accent: #4F8A86; --tint: #E3EFEC; --high: #D9776A; --normal: #93A39F; --low: #C8D1CE; }
+  @media (prefers-color-scheme: dark) {
+    :root[data-theme="mono"] { --bg: #111111; --panel: #1B1B1B; --panel2: #242424; --line: #2E2E2E; --text: #F2F2F2; --muted: #9A9A9A;
+      --accent: #F2F2F2; --tint: #333333; --high: #F2F2F2; --normal: #8A8A8A; --low: #4A4A4A; }
+    :root[data-theme="calm"] { --bg: #1C2326; --panel: #232C30; --panel2: #2A3439; --line: #33403F; --text: #E3EAE8; --muted: #95A5A2;
+      --accent: #7BB5AE; --tint: #2C403E; --high: #E39286; --normal: #7F908D; --low: #4B5A58; }
+  }
+  :root[data-theme="mono"] button.primary { color: var(--bg); }
+  /* Tasks as soft cards */
+  li.task { background: var(--panel2); border: 0; border-radius: 10px; margin-bottom: 6px; padding: 11px 12px; }
+  .projectbar { display: flex; align-items: center; gap: 6px; margin: -2px 0 10px; font-size: 18px; }
+  .menurow { display: flex; align-items: center; gap: 4px; padding: 12px 6px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .menurow .count { margin-left: auto; color: var(--muted); font-size: 13px; }
+  /* The calendar sheet */
+  .calhead { display: flex; align-items: center; justify-content: space-between; font-size: 17px; }
+  .calbar { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 10px; }
+  .switch { display: flex !important; align-items: center; gap: 6px; margin: 0 !important; color: var(--text) !important; font-size: 14px !important; }
+  .switch input { width: auto; }
+  .callist { display: flex; flex-direction: column; gap: 6px; }
+  .cal { display: flex; gap: 10px; padding: 9px 10px; border-radius: 10px; background: var(--panel2); border-left: 4px solid var(--normal); }
+  .cal.meeting { border-left-color: #246FE0; } .cal.focus { border-left-color: var(--accent); } .cal.break { border-left-color: #058527; opacity: .8; }
+  .cal.free { opacity: .55; }
+  .cal .when { width: 66px; flex: none; font-size: 13px; color: var(--muted); }
+  .cal .what { flex: 1; } .cal .what small { display: block; color: var(--high); font-size: 12px; margin-top: 2px; }
+  .nowline { border-top: 2px solid var(--high); margin: 2px 0; position: relative; }
+  .nowline span { position: absolute; right: 0; top: -10px; background: var(--panel); color: var(--high); font-size: 11px; padding: 0 4px; }
 </style>
 </head>
 <body>
@@ -101,9 +132,11 @@
   <header>
     <div class="logo">✓</div>
     <h1>Tasks</h1>
+    <button class="icon hidden" id="projectsBtn" aria-label="Projects">☰</button>
+    <button class="icon hidden" id="calBtn" aria-label="Calendar">📅</button>
     <button class="icon" id="searchBtn" aria-label="Search">⌕</button>
     <button class="icon" id="refresh" aria-label="Refresh">⟳</button>
-    <button class="icon hidden" id="signout" aria-label="Sign out">⎋</button>
+    <button class="icon hidden" id="menuBtn" aria-label="Menu">⋯</button>
   </header>
 
   <section id="signedOut" class="center hidden">
@@ -117,8 +150,10 @@
       <button data-view="today" aria-pressed="true">Today</button>
       <button data-view="all" aria-pressed="false">All</button>
       <button data-view="upcoming" aria-pressed="false">Upcoming</button>
+      <button data-view="undated" aria-pressed="false">Undated</button>
       <button data-view="done" aria-pressed="false">Done</button>
     </div>
+    <div id="projectBar" class="projectbar hidden"><button class="link" id="projectBack">‹ All</button><b id="projectTitle"></b></div>
     <input id="search" class="hidden" placeholder="Search tasks, tags and notes" autocomplete="off">
     <div class="chips" id="chips"></div>
     <div id="list"></div>
@@ -132,14 +167,14 @@
     <input id="newTask" placeholder="Add a task" autocomplete="off" enterkeyhint="done">
     <button class="primary" type="submit">Add</button>
   </form>
-  <small>Try: Call Sam friday at 3pm #client !   or   Pay rent every month on the 1st</small>
+  <small>Try: Call Sam friday at 3pm #Client @calls !   or   Pay rent every month on the 1st</small>
 </div>
 
 <div class="sheet hidden" id="sheet"><div class="card" id="sheetCard"></div></div>
 
 <script src="msal-browser.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
 <script src="config.js"></script>
-<script src="logic.js" integrity="sha384-+q6dEh0Y8NnydmKpBLAQHfOHs1GrQVfSh62QFHENAVc5OHdIIn+CRPgN22Oc8ikx"></script>
-<script src="app.js" integrity="sha384-+ZYwlaSRu9p+Zo9VXbYqTMkZyUiOrBBkPJw3BtpWxNRjBEP0OQmJw89mStip2jQ6"></script>
+<script src="logic.js" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
+<script src="app.js" integrity="sha384-nTt09N2HMAM6wRwc/ebNtG8CGwfGvgmkM+MBNCjy2IveNgCXtDm5+/riIKV6wIjI"></script>
 </body>
 </html>
