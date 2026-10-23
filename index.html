@@ -16,7 +16,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#DC4C3E">
+<meta name="theme-color" content="#FAF9F7">
 <meta name="apple-mobile-web-app-title" content="Tasks">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.json">
@@ -75,6 +75,9 @@
   .status.error { color: var(--high); }
   .center { text-align: center; margin-top: 70px; }
   .hidden { display: none !important; }
+  .dots { display: flex; justify-content: center; gap: 8px; margin: -4px 0 10px; }
+  .dots span { width: 7px; height: 7px; border-radius: 4px; background: var(--line); cursor: pointer; }
+  .dots span.on { background: var(--accent); }
   .addbar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line);
             padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
   .addbar form { max-width: 680px; margin: 0 auto; display: flex; gap: 8px; }
@@ -138,6 +141,7 @@
     <button class="icon" id="refresh" aria-label="Refresh">⟳</button>
     <button class="icon hidden" id="menuBtn" aria-label="Menu">⋯</button>
   </header>
+  <div class="dots" id="pageDots" aria-label="Pages: Tasks and Personal"><span class="on" role="button" aria-label="Tasks"></span><span role="button" aria-label="Personal"></span></div>
 
   <section id="signedOut" class="center hidden">
     <p>Sign in with the Microsoft account your Focus folder is in.</p>
@@ -175,6 +179,6 @@
 <script src="msal-browser.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
 <script src="config.js"></script>
 <script src="logic.js" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
-<script src="app.js" integrity="sha384-nTt09N2HMAM6wRwc/ebNtG8CGwfGvgmkM+MBNCjy2IveNgCXtDm5+/riIKV6wIjI"></script>
+<script src="app.js" integrity="sha384-Q0RcmRyjYyALpgn/NZN/ttP+o/RyIgBPuJdOihaiF2/QsQNKHZh/441r+UGSRd3S"></script>
 </body>
 </html>

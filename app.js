@@ -5,7 +5,15 @@ const CLIENT_ID = String((window.FOCUS_CONFIG || {}).clientId || "PASTE");
 const FOLDER = String((window.FOCUS_CONFIG || {}).folder || "Focus");
 
 // Hardening: the page may only ever touch these three files, in the Focus folder, and nothing else.
-const ALLOWED_FILES = new Set(["task-bin.json", "resolved-tasks.json", "projects.json"]);
+const ALLOWED_FILES = new Set(["task-bin.json", "resolved-tasks.json", "projects.json",
+                               "personal-tasks.json", "personal-finished.json", "personal-projects.json"]);
+/** Two pages: your tasks, and (swipe) your personal tasks, each with its own three files. */
+const FILESETS = {
+  main: ["task-bin.json", "resolved-tasks.json", "projects.json"],
+  personal: ["personal-tasks.json", "personal-finished.json", "personal-projects.json"]
+};
+let mode = "main";
+const files = () => FILESETS[mode];
 // Read only: the calendar Focus shares, and day plans (for the calendar view).
 const READ_ONLY = name => name === "calendar-share.json" || /^plans\/\d{4}-\d{2}-\d{2}\.json$/.test(name);
 function fileUrl(name, writing) {
@@ -81,7 +89,10 @@ async function writeFile(name, data) {
 async function reload() {
   try {
     setStatus("Loading...");
-    [bin, resolved, projects] = await Promise.all([readFile("task-bin.json"), readFile("resolved-tasks.json"), readFile("projects.json")]);
+    const wanted = mode;
+    const loaded = await Promise.all(files().map(readFile));
+    if (wanted !== mode) return; // you switched pages while it loaded
+    [bin, resolved, projects] = loaded;
     render();
     setStatus("Up to date, " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
   } catch (e) { setStatus(e.message, true); }
@@ -92,12 +103,13 @@ async function change(fn, message) {
   busy = true;
   try {
     setStatus("Saving...");
-    const [b, r, p] = await Promise.all([readFile("task-bin.json"), readFile("resolved-tasks.json"), readFile("projects.json")]);
+    const [binFile, doneFile, projectFile] = files();
+    const [b, r, p] = await Promise.all([readFile(binFile), readFile(doneFile), readFile(projectFile)]);
     const touched = fn(b, r, p) || {};
     for (const t of b) if (!t.CreatedAt) t.CreatedAt = iso(new Date());
-    await writeFile("task-bin.json", b);
-    if (touched.resolved) await writeFile("resolved-tasks.json", r);
-    if (touched.projects) await writeFile("projects.json", p);
+    await writeFile(binFile, b);
+    if (touched.resolved) await writeFile(doneFile, r);
+    if (touched.projects) await writeFile(projectFile, p);
     bin = b; resolved = r; projects = p;
     render();
     setStatus("Saved. Your computers pick it up within a minute or so.");
@@ -470,22 +482,87 @@ async function openCalendar(day) {
 // ---------- Menu and themes ----------
 
 const THEMES = [["classic", "Classic"], ["mono", "Monochrome"], ["calm", "Calm"]];
+/** Personal's accent colors: [name, light mode, dark mode]. */
+const ACCENTS = [["green", "Green", "#2F9E5E", "#5CC88A"], ["teal", "Teal", "#13897C", "#4CC3B5"], ["blue", "Blue", "#246FE0", "#6FA3F0"],
+                 ["violet", "Violet", "#7C5CD6", "#A88BF5"], ["amber", "Amber", "#C77D12", "#E8A84A"], ["red", "Red", "#DC4C3E", "#F07A6E"]];
+const darkMode = window.matchMedia("(prefers-color-scheme: dark)");
+const valid = (k, list) => list.some(t => t[0] === k);
+
+/** Your theme on the Tasks page; Personal's own theme and accent on the Personal page. The phone's bars follow. */
 function applyTheme() {
-  const k = localStorage.getItem("focus-theme") || "classic";
-  document.documentElement.dataset.theme = THEMES.some(t => t[0] === k) ? k : "classic";
+  const root = document.documentElement;
+  if (mode === "personal") {
+    const k = localStorage.getItem("focus-ptheme") || "calm";
+    root.dataset.theme = valid(k, THEMES) ? k : "calm";
+    const a = ACCENTS.find(x => x[0] === (localStorage.getItem("focus-paccent") || "green")) || ACCENTS[0];
+    const hex = darkMode.matches ? a[3] : a[2];
+    root.style.setProperty("--accent", hex);
+    root.style.setProperty("--tint", hex + (darkMode.matches ? "33" : "22"));
+  } else {
+    const k = localStorage.getItem("focus-theme") || "classic";
+    root.dataset.theme = valid(k, THEMES) ? k : "classic";
+    root.style.removeProperty("--accent");
+    root.style.removeProperty("--tint");
+  }
+  // The phone's own top and bottom bars take the page's background color (they used to stay red).
+  const bg = getComputedStyle(root).getPropertyValue("--bg").trim() || "#FAF9F7";
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute("content", bg));
 }
+darkMode.addEventListener("change", applyTheme);
+
 function openMenu() {
-  const current = document.documentElement.dataset.theme || "classic";
+  const mainTheme = localStorage.getItem("focus-theme") || "classic";
+  const pTheme = localStorage.getItem("focus-ptheme") || "calm";
+  const pAccent = localStorage.getItem("focus-paccent") || "green";
+  const seg = (items, current, kind) => `<div class="seg">${items.map(([k, n]) => `<button type="button" data-kind="${kind}" data-k="${k}" aria-pressed="${k === current}">${n}</button>`).join("")}</div>`;
   const card = $("sheetCard");
-  card.innerHTML = `<label>Theme</label><div class="seg">${THEMES.map(([k, n]) => `<button type="button" data-k="${k}" aria-pressed="${k === current}">${n}</button>`).join("")}</div>
-    <div class="hint">Light or dark follows your phone.</div>
+  card.innerHTML = `<label>Theme</label>${seg(THEMES, mainTheme, "theme")}
+    <label style="margin-top:14px">Personal page</label>${seg(THEMES, pTheme, "ptheme")}
+    <div class="seg" style="margin-top:6px">${ACCENTS.map(([k, n, light]) => `<button type="button" data-kind="paccent" data-k="${k}" aria-pressed="${k === pAccent}"><span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${light};margin-right:5px"></span>${n}</button>`).join("")}</div>
+    <div class="hint">Light or dark follows your phone. Swipe sideways to switch between Tasks and Personal.</div>
     <div class="sheetbar"><button type="button" id="mSignout">Sign out</button><button type="button" id="mClose">Close</button></div>`;
-  card.querySelectorAll(".seg button").forEach(b => b.onclick = () => { localStorage.setItem("focus-theme", b.dataset.k); applyTheme(); openMenu(); });
+  const keys = { theme: "focus-theme", ptheme: "focus-ptheme", paccent: "focus-paccent" };
+  card.querySelectorAll(".seg button").forEach(b => b.onclick = () => { localStorage.setItem(keys[b.dataset.kind], b.dataset.k); applyTheme(); openMenu(); });
   $("mSignout").onclick = () => { closeSheet(); client.logoutRedirect({ account }); };
   $("mClose").onclick = closeSheet;
   openSheet();
 }
 applyTheme();
+
+// ---------- Tasks and Personal: swipe sideways (or tap the dots) ----------
+
+const pages = { main: { bin: [], resolved: [], projects: [], view: "today" }, personal: { bin: [], resolved: [], projects: [], view: "today" } };
+function switchPage(to) {
+  if (to === mode || busy) return;
+  pages[mode] = { bin, resolved, projects, view: view.startsWith("project:") ? "all" : view };
+  mode = to;
+  ({ bin, resolved, projects, view } = pages[mode]);
+  chip = "all"; search = "";
+  if ($("search")) { $("search").value = ""; $("search").classList.add("hidden"); }
+  document.querySelector("header h1").textContent = mode === "personal" ? "Personal" : "Tasks";
+  $("newTask").placeholder = mode === "personal" ? "Add a personal task" : "Add a task";
+  document.querySelectorAll("#pageDots span").forEach((s, i) => s.classList.toggle("on", (i === 1) === (mode === "personal")));
+  applyTheme();
+  render();
+  reload();
+}
+(function swipes() {
+  let x0 = null, y0 = null, t0 = 0;
+  document.addEventListener("touchstart", e => {
+    if (!$("sheet").classList.contains("hidden") || e.touches.length !== 1) { x0 = null; return; }
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") { x0 = null; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now();
+  }, { passive: true });
+  document.addEventListener("touchend", e => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    x0 = null;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 700) return;
+    switchPage(mode === "main" ? "personal" : "main");
+  }, { passive: true });
+  document.querySelectorAll("#pageDots span").forEach((s, i) => s.onclick = () => switchPage(i === 1 ? "personal" : "main"));
+})();
 
 // ---------- Wiring up ----------
 
