@@ -12,7 +12,7 @@ const FILESETS = {
   main: ["task-bin.json", "resolved-tasks.json", "projects.json"],
   personal: ["personal-tasks.json", "personal-finished.json", "personal-projects.json"]
 };
-let mode = "main";
+let mode = "personal"; // Focus opens on Personal; swipe left for Tasks
 const files = () => FILESETS[mode];
 // Read only: the calendar Focus shares, and day plans (for the calendar view).
 const READ_ONLY = name => name === "calendar-share.json" || /^plans\/\d{4}-\d{2}-\d{2}\.json$/.test(name);
@@ -519,11 +519,13 @@ function openMenu() {
   card.innerHTML = `<label>Theme</label>${seg(THEMES, mainTheme, "theme")}
     <label style="margin-top:14px">Personal page</label>${seg(THEMES, pTheme, "ptheme")}
     <div class="seg" style="margin-top:6px">${ACCENTS.map(([k, n, light]) => `<button type="button" data-kind="paccent" data-k="${k}" aria-pressed="${k === pAccent}"><span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${light};margin-right:5px"></span>${n}</button>`).join("")}</div>
-    <div class="hint">Light or dark follows your phone. Swipe sideways to switch between Tasks and Personal.</div>
+    <div class="hint">Light or dark follows your phone. Swipe left for Tasks, right for Personal.</div>
+    <button type="button" id="mExport" style="width:100%;margin-top:12px">Export or print a list</button>
     <div class="sheetbar"><button type="button" id="mSignout">Sign out</button><button type="button" id="mClose">Close</button></div>`;
   const keys = { theme: "focus-theme", ptheme: "focus-ptheme", paccent: "focus-paccent" };
   card.querySelectorAll(".seg button").forEach(b => b.onclick = () => { localStorage.setItem(keys[b.dataset.kind], b.dataset.k); applyTheme(); openMenu(); });
   $("mSignout").onclick = () => { closeSheet(); client.logoutRedirect({ account }); };
+  $("mExport").onclick = openExport;
   $("mClose").onclick = closeSheet;
   openSheet();
 }
@@ -541,7 +543,7 @@ function switchPage(to) {
   if ($("search")) { $("search").value = ""; $("search").classList.add("hidden"); }
   document.querySelector("header h1").textContent = mode === "personal" ? "Personal" : "Tasks";
   $("newTask").placeholder = mode === "personal" ? "Add a personal task" : "Add a task";
-  document.querySelectorAll("#pageDots span").forEach((s, i) => s.classList.toggle("on", (i === 1) === (mode === "personal")));
+  document.querySelectorAll("#pageDots span").forEach((s, i) => s.classList.toggle("on", (i === 0) === (mode === "personal")));
   applyTheme();
   render();
   reload();
@@ -559,10 +561,107 @@ function switchPage(to) {
     const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
     x0 = null;
     if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2 || Date.now() - t0 > 700) return;
-    switchPage(mode === "main" ? "personal" : "main");
+    // Personal is on the left, Tasks on the right: swipe left to go to Tasks, right to come back.
+    if (dx < 0 && mode === "personal") switchPage("main");
+    else if (dx > 0 && mode === "main") switchPage("personal");
   }, { passive: true });
-  document.querySelectorAll("#pageDots span").forEach((s, i) => s.onclick = () => switchPage(i === 1 ? "personal" : "main"));
+  document.querySelectorAll("#pageDots span").forEach((s, i) => s.onclick = () => switchPage(i === 0 ? "personal" : "main"));
 })();
+// Opening on Personal: its title, entry bar and look from the start.
+document.querySelector("header h1").textContent = "Personal";
+$("newTask").placeholder = "Add a personal task";
+applyTheme();
+
+// ---------- Export and print (the same lists as on the computer) ----------
+
+/** The lists you can print, like the computer's Export menu. */
+function exportChoices() {
+  const d = startOfDay(new Date()), tomorrow = addDays(d, 1), weekEnd = addDays(d, (7 - d.getDay()) % 7 || 7);
+  const open = bin.filter(t => !isSnoozed(t, d));
+  const isToday = t => isDueToday(t, d) || isOverdue(t, d) || isPlannedToday(t, d);
+  const one = (header, items) => [{ header, items: sortTasks(items, d) }];
+  const viewNames = { today: "Today", all: "All tasks", upcoming: "Upcoming", undated: "Undated", done: "Done" };
+  const list = [
+    ["Today", () => [
+      { header: "Overdue", items: sortTasks(open.filter(t => isOverdue(t, d)), d) },
+      { header: "Due today", items: sortTasks(open.filter(t => isDueToday(t, d)), d) },
+      { header: "Picked for today", items: sortTasks(open.filter(t => isPlannedToday(t, d) && !isDueToday(t, d) && !isOverdue(t, d)), d) }]],
+    ["Tomorrow", () => one("Tomorrow", bin.filter(t => sameDay(dueOf(t), tomorrow) || t.PlannedFor === ymd(tomorrow)))],
+    ["This week", () => one("Due by " + weekEnd.toLocaleDateString(undefined, { weekday: "long" }), open.filter(t => { const due = dueOf(t); return due && due <= weekEnd; }))],
+    ["Upcoming", () => {
+      const byDay = {};
+      for (const t of bin.filter(t => dueOf(t) && dueOf(t) > d)) (byDay[ymd(dueOf(t))] ??= []).push(t);
+      return Object.keys(byDay).sort().map(k => ({ header: parseYmd(k).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), items: sortTasks(byDay[k], d) }));
+    }],
+    ["Overdue", () => one("Overdue", open.filter(t => isOverdue(t, d)))],
+    ["Undated", () => one("Undated", open.filter(isUndated))],
+    ["Waiting on", () => one("Waiting on", open.filter(t => t.Status === "waiting"))],
+    ["All tasks", () => {
+      const groups = projects.map(p => ({ header: p.Name, items: sortTasks(open.filter(t => t.Project === p.Id), d) }));
+      groups.push({ header: "No project", items: sortTasks(open.filter(t => !t.Project || !projects.some(p => p.Id === t.Project)), d) });
+      return groups.filter(g => g.items.length);
+    }],
+    ["Done today", () => [{ header: "Done today", done: true, items: resolved.filter(r => (parseDate(r.ResolvedAt) || 0) >= d) }]],
+    ["Done this week", () => { const monday = startOfWeek(d); return [{ header: "Done this week", done: true, items: resolved.filter(r => (parseDate(r.ResolvedAt) || 0) >= monday) }]; }],
+  ];
+  if (view !== "done" && !view.startsWith("project:")) list.unshift([`This view (${viewNames[view] || "Tasks"})`, () => list.find(x => x[0] === (viewNames[view] === "All tasks" ? "All tasks" : viewNames[view]))?.[1]() || one("Tasks", open)]);
+  const projectLists = projects.map(p => [p.Name, () => one(p.Name, open.filter(t => t.Project === p.Id))]);
+  const tags = [...new Set(open.flatMap(t => t.Tags || []))].sort();
+  const tagLists = tags.map(g => ["@" + g, () => one("@" + g, open.filter(t => (t.Tags || []).includes(g)))]);
+  return { list, projectLists, tagLists };
+}
+
+function openExport() {
+  const { list, projectLists, tagLists } = exportChoices();
+  const look = localStorage.getItem("focus-printlook") || "default";
+  const seg = `<div class="seg">${[["default", "Default"], ["compact", "Compact"], ["paper", "Paper"]].map(([k, n]) =>
+    `<button type="button" data-look="${k}" aria-pressed="${k === look}">${n}</button>`).join("")}</div>`;
+  const rows = (items, offset) => items.map(([name], i) => `<button type="button" class="exportRow" data-i="${i + offset}">${esc(name)}</button>`).join("");
+  const all = [...list, ...projectLists, ...tagLists];
+  const card = $("sheetCard");
+  card.innerHTML = `<label>Print or save as a PDF</label>${seg}
+    <div class="exportList">${rows(list, 0)}
+    ${projectLists.length ? `<label style="margin-top:12px">Projects</label>${rows(projectLists, list.length)}` : ""}
+    ${tagLists.length ? `<label style="margin-top:12px">Tags</label>${rows(tagLists, list.length + projectLists.length)}` : ""}</div>
+    <div class="sheetbar"><button type="button" id="xClose">Close</button></div>`;
+  card.querySelectorAll("[data-look]").forEach(b => b.onclick = () => { localStorage.setItem("focus-printlook", b.dataset.look); openExport(); });
+  card.querySelectorAll(".exportRow").forEach(b => b.onclick = () => { const [name, build] = all[+b.dataset.i]; closeSheet(); printGroups(name, build()); });
+  $("xClose").onclick = closeSheet;
+  openSheet();
+}
+
+/** Lays the list out like the computer's printout (logo, title and date, circles to tick, details, due dates), then opens print. */
+function printGroups(title, groups) {
+  const d = startOfDay(new Date());
+  const look = localStorage.getItem("focus-printlook") || "default";
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const date = new Date();
+  const fmtDue = due => due.getFullYear() === d.getFullYear() ? due.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : due.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  const row = (t, done) => {
+    const proj = projects.find(p => p.Id === t.Project);
+    const detail = [proj ? proj.Name : "", ...(t.Tags || []).map(g => "@" + g)].filter(Boolean).join("   ");
+    const due = !done && dueOf(t);
+    const high = !done && t.Priority === "High";
+    return `<div class="p-row"><span class="p-circle${done ? " p-done" : ""}">${done ? "✓" : ""}</span>
+      <div class="p-text"><div class="${done ? "p-struck" : ""}">${esc(t.Text)}</div>${detail ? `<div class="p-detail">${esc(detail)}</div>` : ""}
+      ${(t.Subtasks || []).map(s => `<div class="p-step"><span class="p-circle p-small${s.Done ? " p-done" : ""}">${s.Done ? "✓" : ""}</span>${esc(s.Text)}</div>`).join("")}</div>
+      <div class="p-side">${high ? '<span class="p-high">High</span> ' : ""}${due ? `<span class="${due < d ? "p-high" : ""}">${fmtDue(due)}</span>` : ""}</div></div>`;
+  };
+  const shown = groups.filter(g => g.items.length || groups.length === 1);
+  const html = `<div class="p-page p-${look}">
+    <div class="p-head"><img src="icon-192.png" alt=""><div class="p-names"><div class="p-brand">FOCUS</div><div class="p-title">${esc(title)}</div></div>
+      <div class="p-when"><div>${date.toLocaleDateString(undefined, { weekday: "long" })}</div><b>${date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}</b></div></div>
+    <div class="p-rule"></div>
+    <div class="p-summary">${total === 0 ? "Nothing here right now." : total === 1 ? "1 task" : total + " tasks"}</div>
+    ${shown.map(g => `${shown.length > 1 || g.header !== title ? `<div class="p-group">${esc(g.header)} <span>${g.items.length}</span></div>` : ""}
+      ${g.items.length ? g.items.map(t => row(t, !!g.done)).join("") : '<div class="p-detail">Nothing here right now.</div>'}`).join("")}
+    <div class="p-notes">Notes</div><div class="p-line"></div><div class="p-line"></div><div class="p-line"></div><div class="p-line"></div>
+    <div class="p-foot">Printed from Focus, ${date.toLocaleString(undefined, { month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}</div></div>`;
+  let area = $("printArea");
+  if (!area) { area = document.createElement("div"); area.id = "printArea"; document.body.appendChild(area); }
+  area.innerHTML = html;
+  setTimeout(() => window.print(), 150); // let the logo load first
+}
 
 // ---------- Wiring up ----------
 

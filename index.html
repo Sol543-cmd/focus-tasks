@@ -78,6 +78,36 @@
   .dots { display: flex; justify-content: center; gap: 8px; margin: -4px 0 10px; }
   .dots span { width: 7px; height: 7px; border-radius: 4px; background: var(--line); cursor: pointer; }
   .dots span.on { background: var(--accent); }
+  .exportList { max-height: 50vh; overflow-y: auto; }
+  .exportRow { display: block; width: 100%; text-align: left; margin-top: 6px; }
+  /* Printing: only the printout shows, in ink-friendly colors (whatever the theme) */
+  #printArea { display: none; }
+  @media print {
+    body > *:not(#printArea) { display: none !important; }
+    #printArea { display: block !important; color: #202020; background: #fff; font-family: "Segoe UI", system-ui, sans-serif; }
+    @page { margin: 18mm; }
+  }
+  .p-head { display: flex; align-items: center; gap: 12px; }
+  .p-head img { width: 34px; height: 34px; border-radius: 9px; }
+  .p-names { flex: 1; } .p-brand { font-size: 9.5px; font-weight: 700; color: #DC4C3E; } .p-title { font-size: 22px; font-weight: 600; }
+  .p-when { text-align: right; font-size: 13px; } .p-when div { font-size: 10.5px; color: #777; }
+  .p-rule { height: 2px; background: #DC4C3E; margin: 8px 0 6px; }
+  .p-summary { font-size: 10.5px; color: #777; margin-bottom: 10px; }
+  .p-group { font-size: 13.5px; font-weight: 600; margin: 14px 0 2px; padding-bottom: 3px; border-bottom: 1px solid #ddd; break-after: avoid; }
+  .p-group span { font-size: 10.5px; color: #777; font-weight: 400; }
+  .p-row { display: flex; gap: 12px; padding: 8px 0; border-bottom: 0.75px solid #ddd; break-inside: avoid; }
+  .p-default .p-row { background: #F3F3F1; border-bottom: 3px solid #fff; padding-left: 6px; padding-right: 6px; }
+  .p-compact .p-row { padding: 4px 0; }
+  .p-circle { width: 17px; height: 17px; border: 1.3px solid #202020; border-radius: 50%; flex: none; margin-top: 1px; font-size: 11px; line-height: 17px; text-align: center; color: #fff; }
+  .p-compact .p-circle { width: 14px; height: 14px; line-height: 14px; }
+  .p-circle.p-done { background: #777; border-color: #777; }
+  .p-small { width: 12px; height: 12px; line-height: 12px; font-size: 8px; margin-right: 8px; display: inline-block; vertical-align: middle; }
+  .p-text { flex: 1; font-size: 12.5px; } .p-struck { text-decoration: line-through; color: #777; }
+  .p-detail { font-size: 9.5px; color: #777; margin-top: 1px; } .p-step { font-size: 11px; margin-top: 5px; }
+  .p-side { font-size: 10px; color: #777; text-align: right; min-width: 70px; } .p-high { color: #DC4C3E; font-weight: 600; }
+  .p-notes { font-size: 11px; font-weight: 600; color: #777; margin-top: 22px; }
+  .p-line { border-bottom: 0.75px solid #ddd; height: 22px; }
+  .p-foot { font-size: 8.5px; color: #777; margin-top: 18px; }
   .addbar { position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel); border-top: 1px solid var(--line);
             padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
   .addbar form { max-width: 680px; margin: 0 auto; display: flex; gap: 8px; }
@@ -128,6 +158,17 @@
   .cal .what { flex: 1; } .cal .what small { display: block; color: var(--high); font-size: 12px; margin-top: 2px; }
   .nowline { border-top: 2px solid var(--high); margin: 2px 0; position: relative; }
   .nowline span { position: absolute; right: 0; top: -10px; background: var(--panel); color: var(--high); font-size: 11px; padding: 0 4px; }
+
+  /* ---------- Design A: clean list ---------- */
+  header .logo { display: none; }
+  header h1 { font-size: 22px; font-weight: 600; color: var(--accent); }
+  header button.icon { background: transparent; border: 0; color: var(--muted); font-size: 18px; padding: 6px 8px; }
+  .tabs { gap: 16px; padding: 0 2px 2px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .tabs button { background: transparent; border: 0; border-radius: 0; padding: 8px 0 9px; color: var(--muted); font-size: 14px; }
+  .tabs button[aria-pressed="true"] { background: transparent; color: var(--accent); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
+  body li.task { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; margin: 0; padding: 11px 2px; }
+  .addbar { background: var(--bg); border-top: 1px solid var(--line); }
+  .addbar input { border-radius: 12px; background: var(--panel2, var(--panel)); }
 </style>
 </head>
 <body>
@@ -141,7 +182,7 @@
     <button class="icon" id="refresh" aria-label="Refresh">⟳</button>
     <button class="icon hidden" id="menuBtn" aria-label="Menu">⋯</button>
   </header>
-  <div class="dots" id="pageDots" aria-label="Pages: Tasks and Personal"><span class="on" role="button" aria-label="Tasks"></span><span role="button" aria-label="Personal"></span></div>
+  <div class="dots" id="pageDots" aria-label="Pages: Personal and Tasks"><span class="on" role="button" aria-label="Personal"></span><span role="button" aria-label="Tasks"></span></div>
 
   <section id="signedOut" class="center hidden">
     <p>Sign in with the Microsoft account your Focus folder is in.</p>
@@ -179,6 +220,6 @@
 <script src="msal-browser.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
 <script src="config.js"></script>
 <script src="logic.js" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
-<script src="app.js" integrity="sha384-Q0RcmRyjYyALpgn/NZN/ttP+o/RyIgBPuJdOihaiF2/QsQNKHZh/441r+UGSRd3S"></script>
+<script src="app.js" integrity="sha384-j6y0uawh8Y2KHUFT7rzyPPuLlwrEaCLGJEwLH4UOZvekQuczasCTbSDdGtYU4HYn"></script>
 </body>
 </html>

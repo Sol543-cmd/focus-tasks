@@ -1,6 +1,14 @@
-# Focus Tasks for your phone (hardened version): setup
+# Focus Tasks for your phone: setup
 
-Ten files go into your GitHub repository (upload them all at once):
+**Keep your own config.js in this folder** (the one with your App ID), so you never have to look it up again.
+
+This version adds: an Undated tab, a Projects list (tap one to see just that project, by section), the
+new shortcuts (@label, #Project or its shortcut, /Section), a small calendar (the 📅 icon) with your
+meetings and plan, and three themes (under ⋯).
+
+(Hardened version details below.)
+
+Ten files (plus your config.js) go into your GitHub repository (upload them all at once):
 
 | File | What it is |
 |---|---|
@@ -45,7 +53,7 @@ Ten files go into your GitHub repository (upload them all at once):
 ## Updating later
 
 When you get new files, upload everything except config.js (keep yours). This update changes
-app.js, index.html and sw.js. Never edit app.js,
+app.js, logic.js, index.html and sw.js. Never edit app.js,
 logic.js or msal-browser.min.js by hand: the tamper check will stop the page from running if
 they change.
 
@@ -53,3 +61,19 @@ they change.
 
 Sign out with the ⎋ button, remove the app at myapps.microsoft.com (or account.live.com for a
 personal account), or delete the app registration.
+
+
+## Updating to the version with Personal tasks
+Upload these five files to your GitHub repository (keep your config.js): index.html, app.js, logic.js, sw.js, manifest.json.
+Then close the app on your phone completely and open it again (twice, if it still looks the same).
+Swipe sideways to switch between Tasks and Personal; the dots under the title show where you are.
+The ⋯ menu sets your theme, and Personal's own theme and accent color.
+
+## The red bar at the bottom of the screen
+That bar is Android's own navigation bar; an installed app takes its color from the app's settings, which Android
+only reads when the app is installed. After uploading this version: remove Focus from your home screen, open your
+Focus link in Chrome, and choose Install app (or Add to Home screen) again. Your tasks are in OneDrive, so nothing is lost.
+
+## New icon and look
+The icon is now round, so it looks clean in your phone's circle. Phones only pick up a new icon when the app is
+installed again: remove Focus from your home screen, open your Focus link in Chrome, and install it again.
