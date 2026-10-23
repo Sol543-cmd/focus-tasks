@@ -11,7 +11,7 @@
 <head>
 <meta charset="utf-8">
 <!-- Hardening: this page may only load its own files and talk to Microsoft sign-in and OneDrive. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://login.microsoftonline.com https://login.live.com https://graph.microsoft.com https://*.sharepoint.com https://*.1drv.com https://*.livefilestore.com https://*.microsoftpersonalcontent.com; frame-src https://login.microsoftonline.com https://login.live.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://www.googleapis.com https://login.microsoftonline.com https://login.live.com https://graph.microsoft.com https://*.sharepoint.com https://*.1drv.com https://*.livefilestore.com https://*.microsoftpersonalcontent.com; frame-src https://login.microsoftonline.com https://login.live.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -169,6 +169,40 @@
   body li.task { background: transparent; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; margin: 0; padding: 11px 2px; }
   .addbar { background: var(--bg); border-top: 1px solid var(--line); }
   .addbar input { border-radius: 12px; background: var(--panel2, var(--panel)); }
+
+  /* ---------- Design 1: date pill, quiet icons, filters on demand, + and Projects at the bottom ---------- */
+  header { gap: 6px; }
+  header h1 { margin-right: 4px; }
+  .hspace { flex: 1; }
+  .datepill { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; padding: 5px 11px;
+              border-radius: 99px; border: 0; background: var(--tint); color: var(--accent); }
+  header button.icon { position: relative; width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center;
+                       border-radius: 19px; padding: 0; }
+  header button.icon:active { background: var(--panel2, var(--panel)); }
+  .fdot { position: absolute; top: 8px; right: 8px; width: 7px; height: 7px; border-radius: 4px; background: var(--accent); }
+  .stats { font-size: 12px; margin: -2px 0 8px; }
+  body:not(.filters-open) #chips { display: none !important; }
+  main { padding-bottom: 96px; }
+  .fab { position: fixed; right: 16px; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 10px; align-items: center; z-index: 5; }
+  .fabpill { border: 0; border-radius: 99px; padding: 12px 18px; font-size: 14px; font-weight: 600; background: var(--panel);
+             color: var(--text); box-shadow: 0 4px 14px rgba(0,0,0,.14); }
+  .fabplus { border: 0; width: 56px; height: 56px; border-radius: 28px; font-size: 30px; line-height: 1; background: var(--accent);
+             color: #fff; box-shadow: 0 6px 16px rgba(0,0,0,.2); }
+  .ptr { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--muted); font-size: 12px;
+         padding: 6px 12px; border-radius: 99px; box-shadow: 0 2px 8px rgba(0,0,0,.12); z-index: 6; }
+  .addsheet input { width: 100%; font-size: 16px; }
+  .addsheet small { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; }
+  /* the calendar's Day and Month views */
+  .month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; font-size: 13px; }
+  .month .dow { color: var(--muted); font-size: 11px; padding: 4px 0; }
+  .month button { border: 0; background: transparent; border-radius: 10px; padding: 7px 0 5px; color: var(--text); min-height: 44px; }
+  .month button.other { color: var(--muted); opacity: .5; }
+  .month button.today { background: var(--accent); color: #fff; font-weight: 600; }
+  .month .marks { display: block; height: 6px; line-height: 6px; font-size: 10px; color: var(--accent); letter-spacing: 1px; }
+  .month button.today .marks { color: #fff; }
+  .evrow { cursor: pointer; }
+  .evform input { width: 100%; }
+  .evform .two { display: flex; gap: 8px; } .evform .two > * { flex: 1; }
 </style>
 </head>
 <body>
@@ -176,11 +210,11 @@
   <header>
     <div class="logo">✓</div>
     <h1>Tasks</h1>
-    <button class="icon hidden" id="projectsBtn" aria-label="Projects">☰</button>
-    <button class="icon hidden" id="calBtn" aria-label="Calendar">📅</button>
-    <button class="icon" id="searchBtn" aria-label="Search">⌕</button>
-    <button class="icon" id="refresh" aria-label="Refresh">⟳</button>
-    <button class="icon hidden" id="menuBtn" aria-label="Menu">⋯</button>
+    <button class="datepill hidden" id="calBtn" aria-label="Calendar"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span id="calDate"></span></button>
+    <span class="hspace"></span>
+    <button class="icon" id="searchBtn" aria-label="Search"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg></button>
+    <button class="icon" id="filterBtn" aria-label="Filters"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="fdot hidden" id="filterDot"></span></button>
+    <button class="icon hidden" id="menuBtn" aria-label="Menu"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/></svg></button>
   </header>
   <div class="dots" id="pageDots" aria-label="Pages: Personal and Tasks"><span class="on" role="button" aria-label="Personal"></span><span role="button" aria-label="Tasks"></span></div>
 
@@ -192,8 +226,8 @@
   <section id="app" class="hidden">
     <div class="stats" id="stats"></div>
     <div class="tabs" id="tabs">
-      <button data-view="today" aria-pressed="true">Today</button>
-      <button data-view="all" aria-pressed="false">All</button>
+      <button data-view="all" aria-pressed="true">All</button>
+      <button data-view="today" aria-pressed="false">Today</button>
       <button data-view="upcoming" aria-pressed="false">Upcoming</button>
       <button data-view="undated" aria-pressed="false">Undated</button>
       <button data-view="done" aria-pressed="false">Done</button>
@@ -207,19 +241,18 @@
   <p class="status" id="status"></p>
 </main>
 
-<div class="addbar hidden" id="addbar">
-  <form id="addForm">
-    <input id="newTask" placeholder="Add a task" autocomplete="off" enterkeyhint="done">
-    <button class="primary" type="submit">Add</button>
-  </form>
-  <small>Try: Call Sam friday at 3pm #Client @calls !   or   Pay rent every month on the 1st</small>
+<!-- Bottom right: your projects, and + to add a task -->
+<div class="fab hidden" id="addbar">
+  <button type="button" class="fabpill" id="projectsBtn">Projects</button>
+  <button type="button" class="fabplus" id="addBtn" aria-label="Add a task">+</button>
 </div>
+<div class="ptr hidden" id="ptr">Release to refresh</div>
 
 <div class="sheet hidden" id="sheet"><div class="card" id="sheetCard"></div></div>
 
 <script src="msal-browser.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
 <script src="config.js"></script>
 <script src="logic.js" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
-<script src="app.js" integrity="sha384-j6y0uawh8Y2KHUFT7rzyPPuLlwrEaCLGJEwLH4UOZvekQuczasCTbSDdGtYU4HYn"></script>
+<script src="app.js" integrity="sha384-i66tT+JpkgEKC6h23IKRw+JrZ3xR7MR/6QlvnhcADzqrbSiQZYzNb7xYbSu7pGCL"></script>
 </body>
 </html>

@@ -28,7 +28,10 @@ const $ = id => document.getElementById(id);
 
 let client, account;
 let bin = [], resolved = [], projects = [];
-let view = "today", chip = "all", search = "", busy = false;
+/** What a page opens on: All, unless you chose Today in the ⋯ menu ("personal" or "main"). */
+const openingView = m => localStorage.getItem("focus-open-" + m) === "today" ? "today" : "all";
+let view = openingView("personal"), chip = "all", search = "", busy = false;
+let filtersOpen = false;
 
 const today = () => startOfDay(new Date());
 function setStatus(text, isError) { $("status").textContent = text || ""; $("status").classList.toggle("error", !!isError); }
@@ -197,6 +200,9 @@ function renderChips() {
   tags.forEach(x => chips.push(["#" + x, "#" + esc(x)]));
   if (!chips.some(c => c[0] === chip)) chip = "all";
   $("chips").classList.toggle("hidden", view === "done");
+  document.body.classList.toggle("filters-open", filtersOpen);
+  $("filterDot").classList.toggle("hidden", chip === "all");
+  $("calDate").textContent = new Date().toLocaleDateString([], { weekday: "short", day: "numeric" });
   $("chips").innerHTML = chips.map(([k, l]) => `<button data-chip="${esc(k)}" aria-pressed="${k === chip}">${l}</button>`).join("");
   $("chips").querySelectorAll("button").forEach(b => b.onclick = () => { chip = b.dataset.chip; render(); });
 }
@@ -421,62 +427,208 @@ function closeSheet() { $("sheet").classList.add("hidden"); }
 
 // ---------- Calendar (kept small: tasks stay the main thing) ----------
 
-let calDay = null;
 const calShowPlan = () => localStorage.getItem("focus-cal-plan") !== "off";
 
 /** Meetings (shared by Focus on your computer) and, if you like, that day's plan. */
-async function openCalendar(day) {
+// ---------- Google Calendar (Personal's calendar), two-way ----------
+// Connects straight to Google (no outside code is loaded): you sign in on Google's page, Google sends you back with
+// a pass that lasts about an hour, and the app reads and changes your events with it. When it runs out, Connect again.
+
+const GOOGLE_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const gClientId = () => (localStorage.getItem("focus-google-client") || (window.FOCUS_CONFIG && window.FOCUS_CONFIG.googleClientId) || "").trim();
+const gCalendarId = () => (localStorage.getItem("focus-google-calendar") || "primary").trim() || "primary";
+function gToken() {
+  try { const t = JSON.parse(localStorage.getItem("focus-google-token") || "null"); return t && t.exp > Date.now() + 60000 ? t.token : null; }
+  catch { return null; }
+}
+function gConnect() {
+  const id = gClientId();
+  if (!id) { toast("Add your Google client ID first (⋯ menu, Google Calendar)."); return; }
+  const back = location.origin + location.pathname;
+  location.href = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
+    client_id: id, redirect_uri: back, response_type: "token", scope: GOOGLE_SCOPE, include_granted_scopes: "true", state: "focus-google", prompt: ""
+  }).toString().replace("&prompt=", "");
+}
+function gDisconnect() { localStorage.removeItem("focus-google-token"); toast("Google Calendar disconnected"); }
+// Coming back from Google's sign-in page: keep the pass, and tidy the address.
+(function readGoogleReturn() {
+  if (!location.hash.includes("state=focus-google")) return;
+  const q = new URLSearchParams(location.hash.slice(1));
+  if (q.get("access_token")) localStorage.setItem("focus-google-token", JSON.stringify({ token: q.get("access_token"), exp: Date.now() + (Number(q.get("expires_in")) || 3600) * 1000 }));
+  history.replaceState(null, "", location.pathname + location.search);
+  sessionStorage.setItem("focus-open-calendar", "1"); // go straight back to the calendar
+})();
+async function gFetch(path, opts = {}) {
+  const t = gToken();
+  if (!t) throw Object.assign(new Error("Connect Google Calendar to see it here."), { needsConnect: true });
+  const r = await fetch("https://www.googleapis.com/calendar/v3/calendars/" + encodeURIComponent(gCalendarId()) + path,
+    { ...opts, headers: { Authorization: "Bearer " + t, "Content-Type": "application/json", ...(opts.headers || {}) } });
+  if (r.status === 401) { localStorage.removeItem("focus-google-token"); throw Object.assign(new Error("Google's sign-in has run out. Connect again."), { needsConnect: true }); }
+  if (!r.ok && r.status !== 204) throw new Error("Google Calendar: " + r.status + " " + ((await r.text()).slice(0, 120)));
+  return r.status === 204 ? null : r.json();
+}
+/** Events from your Google calendar between two dates (repeating events come as separate days). */
+async function gEvents(from, to) {
+  const out = []; let page = "";
+  do {
+    const j = await gFetch("/events?" + new URLSearchParams({ timeMin: from.toISOString(), timeMax: to.toISOString(), singleEvents: "true", orderBy: "startTime", maxResults: "250", ...(page ? { pageToken: page } : {}) }));
+    for (const e of j.items || []) {
+      if (e.status === "cancelled") continue;
+      const allDay = !!(e.start && e.start.date);
+      out.push({ id: e.id, title: e.summary || "(No title)", allDay, kind: "meeting",
+                 start: allDay ? parseYmd(e.start.date) : new Date(e.start.dateTime), end: allDay ? parseYmd(e.end.date) : new Date(e.end.dateTime), raw: e });
+    }
+    page = j.nextPageToken || "";
+  } while (page);
+  return out;
+}
+const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+function gBody(f) {
+  if (f.allDay) return { summary: f.title, start: { date: f.date }, end: { date: ymd(addDays(parseYmd(f.date), 1)) } };
+  return { summary: f.title, start: { dateTime: `${f.date}T${f.from}:00`, timeZone: zone() }, end: { dateTime: `${f.date}T${f.to}:00`, timeZone: zone() } };
+}
+
+// ---------- The calendar: Day and Month ----------
+
+let calDay = null, calMonth = null;
+const calKind = () => localStorage.getItem("focus-cal-kind") === "month" ? "month" : "day";
+const timeText = d => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+/** Your work calendar (shared by Focus on your computer), and optionally your plan, for one day. */
+async function workDay(day) {
+  const shared = await readFile("calendar-share.json");
+  const items = (Array.isArray(shared) ? shared : [])
+    .map(e => ({ title: e.Title || "Busy", start: parseDate(e.Start), end: parseDate(e.End), allDay: !!e.AllDay, busy: e.Busy !== false, kind: "meeting" }))
+    .filter(e => e.start && e.end && e.start < addDays(day, 1) && e.end > day);
+  if (calShowPlan()) {
+    const plan = await readFile(`plans/${ymd(day)}.json`);
+    if (plan && !Array.isArray(plan) && Array.isArray(plan.Blocks)) {
+      const [h, m] = String(plan.DayStart || "06:45").split(":").map(Number);
+      let t = new Date(day); t.setHours(h || 0, m || 0, 0, 0);
+      for (const b of plan.Blocks) {
+        const start = new Date(t), end = new Date(t.getTime() + (b.Minutes || 0) * 60000); t = end;
+        if (b.Kind === "Meeting") continue; // meetings come from the calendar itself
+        items.push({ title: b.Name || (b.Kind === "Focus" ? "Focus" : "Break"), start, end, kind: b.Kind === "Focus" ? "focus" : "break",
+                     tasks: (b.Tasks || []).filter(x => x && x.Text).map(x => x.Text) });
+      }
+    }
+  }
+  return { items, note: Array.isArray(shared) && shared.length ? "Meetings come from Focus on your computer (updated every 15 minutes while it's on)."
+                                                                : "No meetings shared yet. Focus on your computer shares your calendar once it's connected." };
+}
+
+function dayHtml(items, day, editable) {
+  items.sort((a, b) => (a.allDay ? -1 : 0) - (b.allDay ? -1 : 0) || a.start - b.start || (a.kind === "meeting" ? -1 : 1));
+  const now = new Date();
+  let html = "", nowShown = !sameDay(day, now);
+  items.forEach((it, i) => {
+    if (!nowShown && !it.allDay && it.start > now) { html += `<div class="nowline"><span>Now ${timeText(now)}</span></div>`; nowShown = true; }
+    html += `<div class="cal ${it.kind}${it.busy === false ? " free" : ""}${editable ? " evrow" : ""}" data-i="${i}"><div class="when">${it.allDay ? "All day" : `${timeText(it.start)}<br><small>${timeText(it.end)}</small>`}</div>` +
+      `<div class="what">${esc(it.title)}${it.tasks && it.tasks.length ? `<small>${it.tasks.map((x, n) => `${n + 1}. ${esc(x)}`).join("<br>")}</small>` : ""}</div></div>`;
+  });
+  if (!nowShown) html += `<div class="nowline"><span>Now ${timeText(now)}</span></div>`;
+  return html;
+}
+
+/** Opens the calendar: Day or Month (your choice is remembered). Personal shows your Google calendar; Tasks your work one. */
+async function openCalendar(day, kind) {
+  if (kind) localStorage.setItem("focus-cal-kind", kind);
   calDay = startOfDay(day || calDay || new Date());
+  const personal = mode === "personal", month = calKind() === "month";
+  if (month) calMonth = new Date(calDay.getFullYear(), calDay.getMonth(), 1);
   const card = $("sheetCard");
-  card.innerHTML = `<div class="calhead"><button type="button" class="icon" id="cPrev" aria-label="Previous day">‹</button>
-      <b id="cTitle"></b><button type="button" class="icon" id="cNext" aria-label="Next day">›</button></div>
+  const title = month ? calMonth.toLocaleDateString([], { month: "long", year: "numeric" })
+                      : sameDay(calDay, today()) ? "Today" : calDay.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  card.innerHTML = `<div class="seg" style="margin-bottom:10px"><button type="button" id="cDay" aria-pressed="${!month}">Day</button><button type="button" id="cMonth" aria-pressed="${month}">Month</button></div>
+    <div class="calhead"><button type="button" class="icon" id="cPrev" aria-label="Previous">‹</button><b>${esc(title)}</b><button type="button" class="icon" id="cNext" aria-label="Next">›</button></div>
     <div class="calbar"><button type="button" id="cToday">Today</button>
-      <label class="switch"><input type="checkbox" id="cPlan" ${calShowPlan() ? "checked" : ""}> Show my plan</label></div>
+      ${personal ? (month ? "" : `<button type="button" id="cAdd">+ Event</button>`) : (month ? "" : `<label class="switch"><input type="checkbox" id="cPlan" ${calShowPlan() ? "checked" : ""}> Show my plan</label>`)}</div>
     <div id="cList" class="callist"><p class="empty">Loading...</p></div>
     <div class="hint" id="cNote"></div>
     <div class="sheetbar"><span></span><button type="button" id="cClose">Close</button></div>`;
-  $("cTitle").textContent = sameDay(calDay, today()) ? "Today" : calDay.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-  $("cPrev").onclick = () => openCalendar(addDays(calDay, -1));
-  $("cNext").onclick = () => openCalendar(addDays(calDay, 1));
+  $("cDay").onclick = () => openCalendar(calDay, "day");
+  $("cMonth").onclick = () => openCalendar(calDay, "month");
+  $("cPrev").onclick = () => openCalendar(month ? new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1) : addDays(calDay, -1));
+  $("cNext").onclick = () => openCalendar(month ? new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1) : addDays(calDay, 1));
   $("cToday").onclick = () => openCalendar(new Date());
-  $("cPlan").onchange = e => { localStorage.setItem("focus-cal-plan", e.target.checked ? "on" : "off"); openCalendar(calDay); };
+  if ($("cPlan")) $("cPlan").onchange = e => { localStorage.setItem("focus-cal-plan", e.target.checked ? "on" : "off"); openCalendar(calDay); };
+  if ($("cAdd")) $("cAdd").onclick = () => editEvent(null, calDay);
   $("cClose").onclick = closeSheet;
   openSheet();
-  const shownDay = calDay;
+  const shown = calDay, shownKind = calKind();
+  const still = () => shown === calDay && shownKind === calKind() && !$("sheet").classList.contains("hidden");
   try {
-    const shared = await readFile("calendar-share.json");
-    if (shownDay !== calDay) return; // you've moved to another day meanwhile
-    const items = (Array.isArray(shared) ? shared : [])
-      .map(e => ({ title: e.Title || "Busy", start: parseDate(e.Start), end: parseDate(e.End), allDay: !!e.AllDay, busy: e.Busy !== false, kind: "meeting" }))
-      .filter(e => e.start && e.end && e.start < addDays(shownDay, 1) && e.end > shownDay);
-    if (calShowPlan()) {
-      const plan = await readFile(`plans/${ymd(shownDay)}.json`);
-      if (plan && !Array.isArray(plan) && Array.isArray(plan.Blocks)) {
-        const [h, m] = String(plan.DayStart || "06:45").split(":").map(Number);
-        let t = new Date(shownDay); t.setHours(h || 0, m || 0, 0, 0);
-        for (const b of plan.Blocks) {
-          const start = new Date(t), end = new Date(t.getTime() + (b.Minutes || 0) * 60000); t = end;
-          if (b.Kind === "Meeting") continue; // meetings come from the calendar itself
-          items.push({ title: b.Name || (b.Kind === "Focus" ? "Focus" : "Break"), start, end, kind: b.Kind === "Focus" ? "focus" : "break",
-                       tasks: (b.Tasks || []).filter(x => x && x.Text).map(x => x.Text) });
-        }
+    if (month) {
+      // Six weeks from the Monday before the 1st, each day marked with dots for its events.
+      const first = startOfWeek(calMonth), last = addDays(first, 42);
+      let events = [];
+      if (personal) events = await gEvents(first, last);
+      else { const shared = await readFile("calendar-share.json"); events = (Array.isArray(shared) ? shared : []).map(e => ({ start: parseDate(e.Start), end: parseDate(e.End) })).filter(e => e.start); }
+      if (!still()) return;
+      let html = `<div class="month">${["M", "T", "W", "T", "F", "S", "S"].map(d => `<div class="dow">${d}</div>`).join("")}`;
+      for (let n = 0; n < 42; n++) {
+        const d = addDays(first, n);
+        const count = events.filter(e => e.start < addDays(d, 1) && (e.end || e.start) > d).length;
+        html += `<button type="button" data-day="${ymd(d)}" class="${d.getMonth() !== calMonth.getMonth() ? "other" : ""}${sameDay(d, today()) ? " today" : ""}">${d.getDate()}<span class="marks">${"•".repeat(Math.min(count, 3))}</span></button>`;
       }
+      $("cList").innerHTML = html + "</div>";
+      $("cList").querySelectorAll("[data-day]").forEach(b => b.onclick = () => openCalendar(parseYmd(b.dataset.day), "day"));
+      $("cNote").textContent = personal ? "Your Google calendar. Tap a day to see it." : "Your work calendar from Focus. Tap a day to see it.";
+      return;
     }
-    if (shownDay !== calDay) return;
-    items.sort((a, b) => (a.allDay ? -1 : 0) - (b.allDay ? -1 : 0) || a.start - b.start || (a.kind === "meeting" ? -1 : 1));
-    const now = new Date(), time = d => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    let html = "", nowShown = !sameDay(shownDay, now);
-    for (const it of items) {
-      if (!nowShown && !it.allDay && it.start > now) { html += `<div class="nowline"><span>Now ${time(now)}</span></div>`; nowShown = true; }
-      html += `<div class="cal ${it.kind}${it.busy === false ? " free" : ""}"><div class="when">${it.allDay ? "All day" : `${time(it.start)}<br><small>${time(it.end)}</small>`}</div>` +
-        `<div class="what">${esc(it.title)}${it.tasks && it.tasks.length ? `<small>${it.tasks.map((x, i) => `${i + 1}. ${esc(x)}`).join("<br>")}</small>` : ""}</div></div>`;
+    if (personal) {
+      const items = await gEvents(shown, addDays(shown, 1));
+      if (!still()) return;
+      $("cList").innerHTML = items.length ? dayHtml(items, shown, true) : `<p class="empty">Nothing on your Google calendar.</p>`;
+      $("cList").querySelectorAll(".evrow").forEach(row => row.onclick = () => editEvent(items[+row.dataset.i], shown));
+      $("cNote").textContent = "Your Google calendar: tap an event to change it. Changes show in Google too.";
+    } else {
+      const { items, note } = await workDay(shown);
+      if (!still()) return;
+      $("cList").innerHTML = items.length ? dayHtml(items, shown, false) : `<p class="empty">Nothing on the calendar${calShowPlan() ? " or planned" : ""}.</p>`;
+      $("cNote").textContent = note;
     }
-    if (!nowShown) html += `<div class="nowline"><span>Now ${time(now)}</span></div>`;
-    $("cList").innerHTML = items.length ? html : `<p class="empty">Nothing on the calendar${calShowPlan() ? " or planned" : ""}.</p>`;
-    $("cNote").textContent = Array.isArray(shared) && shared.length
-      ? "Meetings come from Focus on your computer (updated every 15 minutes while it's on)."
-      : "No meetings shared yet. Focus on your computer shares your calendar once it's connected and syncing.";
-  } catch (e) { if (shownDay === calDay) $("cList").innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  } catch (e) {
+    if (!still()) return;
+    $("cList").innerHTML = e.needsConnect
+      ? `<p class="empty">${esc(e.message)}</p><button type="button" class="primary" id="cConnect" style="width:100%">${gClientId() ? "Connect Google Calendar" : "Set up Google Calendar"}</button>`
+      : `<p class="empty">${esc(e.message)}</p>`;
+    if ($("cConnect")) $("cConnect").onclick = () => gClientId() ? gConnect() : openMenu();
+  }
+}
+
+/** Adding or changing an event on your Google calendar (it changes in Google too). */
+function editEvent(ev, day) {
+  const d = ev ? ev.start : day;
+  const pad = n => String(n).padStart(2, "0");
+  const hm = x => `${pad(x.getHours())}:${pad(x.getMinutes())}`;
+  const from = ev && !ev.allDay ? hm(ev.start) : "09:00", to = ev && !ev.allDay ? hm(ev.end) : "10:00";
+  const card = $("sheetCard");
+  card.innerHTML = `<div class="evform"><label>${ev ? "Event" : "New event"}</label>
+    <input id="eTitle" value="${esc(ev ? ev.title : "")}" placeholder="What" autocomplete="off">
+    <label>Day</label><input id="eDate" type="date" value="${ymd(d)}">
+    <label class="switch" style="margin-top:12px"><input type="checkbox" id="eAll" ${ev && ev.allDay ? "checked" : ""}> All day</label>
+    <div class="two" id="eTimes"><div><label>From</label><input id="eFrom" type="time" value="${from}"></div><div><label>To</label><input id="eTo" type="time" value="${to}"></div></div></div>
+    <div class="sheetbar">${ev ? `<button type="button" id="eDelete">Delete</button>` : "<span></span>"}<span><button type="button" id="eCancel">Cancel</button> <button type="button" class="primary" id="eSave">Save</button></span></div>`;
+  const times = () => $("eTimes").classList.toggle("hidden", $("eAll").checked);
+  times(); $("eAll").onchange = times;
+  $("eCancel").onclick = () => openCalendar(day, "day");
+  $("eSave").onclick = async () => {
+    const f = { title: $("eTitle").value.trim() || "(No title)", date: $("eDate").value, allDay: $("eAll").checked, from: $("eFrom").value, to: $("eTo").value };
+    if (!f.date || (!f.allDay && f.to <= f.from)) { toast("Check the day and times."); return; }
+    try {
+      if (ev) await gFetch("/events/" + encodeURIComponent(ev.id), { method: "PATCH", body: JSON.stringify(gBody(f)) });
+      else await gFetch("/events", { method: "POST", body: JSON.stringify(gBody(f)) });
+      toast(ev ? "Event changed" : "Event added");
+      openCalendar(parseYmd(f.date), "day");
+    } catch (e) { toast(e.message); }
+  };
+  if ($("eDelete")) $("eDelete").onclick = async () => {
+    if (!confirm("Delete this event from your Google calendar?")) return;
+    try { await gFetch("/events/" + encodeURIComponent(ev.id), { method: "DELETE" }); toast("Event deleted"); openCalendar(day, "day"); }
+    catch (e) { toast(e.message); }
+  };
+  $("eTitle").focus();
 }
 
 // ---------- Menu and themes ----------
@@ -520,9 +672,22 @@ function openMenu() {
     <label style="margin-top:14px">Personal page</label>${seg(THEMES, pTheme, "ptheme")}
     <div class="seg" style="margin-top:6px">${ACCENTS.map(([k, n, light]) => `<button type="button" data-kind="paccent" data-k="${k}" aria-pressed="${k === pAccent}"><span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${light};margin-right:5px"></span>${n}</button>`).join("")}</div>
     <div class="hint">Light or dark follows your phone. Swipe left for Tasks, right for Personal.</div>
+    <label style="margin-top:14px">Personal opens on</label>${seg([["all", "All"], ["today", "Today"]], openingView("personal"), "openpersonal")}
+    <label style="margin-top:10px">Tasks opens on</label>${seg([["all", "All"], ["today", "Today"]], openingView("main"), "openmain")}
+    <label style="margin-top:14px">Google Calendar (Personal's calendar)</label>
+    <input id="mGClient" placeholder="Google client ID (see SETUP.md)" value="${esc(gClientId())}" autocomplete="off">
+    <input id="mGCal" placeholder="Calendar ID (leave as primary for your main calendar)" value="${esc(gCalendarId())}" autocomplete="off" style="margin-top:6px">
+    <div class="hint">${gToken() ? "Connected." : "Not connected."} Events you add, change or delete in Personal's calendar change in Google too.</div>
+    <div style="display:flex;gap:8px;margin-top:6px"><button type="button" id="mGConnect" style="flex:1">${gToken() ? "Reconnect" : "Connect"}</button>${gToken() ? `<button type="button" id="mGOff" style="flex:1">Disconnect</button>` : ""}</div>
+    <button type="button" id="mRefresh" style="width:100%;margin-top:12px">Refresh now</button>
     <button type="button" id="mExport" style="width:100%;margin-top:12px">Export or print a list</button>
     <div class="sheetbar"><button type="button" id="mSignout">Sign out</button><button type="button" id="mClose">Close</button></div>`;
-  const keys = { theme: "focus-theme", ptheme: "focus-ptheme", paccent: "focus-paccent" };
+  const keys = { theme: "focus-theme", ptheme: "focus-ptheme", paccent: "focus-paccent", openpersonal: "focus-open-personal", openmain: "focus-open-main" };
+  const saveGoogle = () => { localStorage.setItem("focus-google-client", $("mGClient").value.trim()); localStorage.setItem("focus-google-calendar", $("mGCal").value.trim() || "primary"); };
+  $("mGClient").onchange = saveGoogle; $("mGCal").onchange = saveGoogle;
+  $("mGConnect").onclick = () => { saveGoogle(); gConnect(); };
+  if ($("mGOff")) $("mGOff").onclick = () => { gDisconnect(); openMenu(); };
+  $("mRefresh").onclick = () => { closeSheet(); reload(); };
   card.querySelectorAll(".seg button").forEach(b => b.onclick = () => { localStorage.setItem(keys[b.dataset.kind], b.dataset.k); applyTheme(); openMenu(); });
   $("mSignout").onclick = () => { closeSheet(); client.logoutRedirect({ account }); };
   $("mExport").onclick = openExport;
@@ -531,9 +696,44 @@ function openMenu() {
 }
 applyTheme();
 
+// ---------- Adding a task: the + button ----------
+
+function openAdd() {
+  const card = $("sheetCard");
+  card.innerHTML = `<form class="addsheet" id="aForm"><label>${mode === "personal" ? "Add a personal task" : "Add a task"}</label>
+    <input id="aText" autocomplete="off" enterkeyhint="done" placeholder="Call Sam friday at 3pm #Client @calls !">
+    <small>Add as many as you like; each one is saved when you press Enter.</small>
+    <div class="sheetbar"><span></span><span><button type="button" id="aClose">Done</button> <button type="submit" class="primary">Add</button></span></div></form>`;
+  $("aForm").onsubmit = e => { e.preventDefault(); const v = $("aText").value.trim(); if (!v) return; $("aText").value = ""; add(v); $("aText").focus(); };
+  $("aClose").onclick = closeSheet;
+  openSheet();
+  setTimeout(() => $("aText").focus(), 60);
+}
+
+// ---------- Pull down to refresh ----------
+
+(function pullToRefresh() {
+  let y0 = null, x0 = 0, pulled = false;
+  document.addEventListener("touchstart", e => {
+    y0 = window.scrollY <= 0 && $("sheet").classList.contains("hidden") && e.touches.length === 1 ? e.touches[0].clientY : null;
+    x0 = e.touches[0].clientX; pulled = false;
+  }, { passive: true });
+  document.addEventListener("touchmove", e => {
+    if (y0 === null) return;
+    const dy = e.touches[0].clientY - y0, dx = Math.abs(e.touches[0].clientX - x0);
+    pulled = dy > 90 && dx < 50;
+    $("ptr").classList.toggle("hidden", !pulled);
+  }, { passive: true });
+  document.addEventListener("touchend", () => {
+    $("ptr").classList.add("hidden");
+    if (pulled && account) reload();
+    y0 = null; pulled = false;
+  }, { passive: true });
+})();
+
 // ---------- Tasks and Personal: swipe sideways (or tap the dots) ----------
 
-const pages = { main: { bin: [], resolved: [], projects: [], view: "today" }, personal: { bin: [], resolved: [], projects: [], view: "today" } };
+const pages = { main: { bin: [], resolved: [], projects: [], view: openingView("main") }, personal: { bin: [], resolved: [], projects: [], view: openingView("personal") } };
 function switchPage(to) {
   if (to === mode || busy) return;
   pages[mode] = { bin, resolved, projects, view: view.startsWith("project:") ? "all" : view };
@@ -542,7 +742,6 @@ function switchPage(to) {
   chip = "all"; search = "";
   if ($("search")) { $("search").value = ""; $("search").classList.add("hidden"); }
   document.querySelector("header h1").textContent = mode === "personal" ? "Personal" : "Tasks";
-  $("newTask").placeholder = mode === "personal" ? "Add a personal task" : "Add a task";
   document.querySelectorAll("#pageDots span").forEach((s, i) => s.classList.toggle("on", (i === 0) === (mode === "personal")));
   applyTheme();
   render();
@@ -569,7 +768,6 @@ function switchPage(to) {
 })();
 // Opening on Personal: its title, entry bar and look from the start.
 document.querySelector("header h1").textContent = "Personal";
-$("newTask").placeholder = "Add a personal task";
 applyTheme();
 
 // ---------- Export and print (the same lists as on the computer) ----------
@@ -669,16 +867,18 @@ $("signin").onclick = () => client.loginRedirect({ scopes: SCOPES });
 $("menuBtn").onclick = openMenu;
 $("projectsBtn").onclick = openProjects;
 $("calBtn").onclick = () => openCalendar(new Date());
+// Back from Google's sign-in: open the calendar again once the app is ready.
+if (sessionStorage.getItem("focus-open-calendar")) { sessionStorage.removeItem("focus-open-calendar"); setTimeout(() => openCalendar(new Date()), 900); }
 $("projectBack").onclick = () => { view = "all"; render(); };
 $("sheet").addEventListener("click", e => { if (e.target.id === "sheet") closeSheet(); });
-$("refresh").onclick = reload;
+$("addBtn").onclick = openAdd;
+$("filterBtn").onclick = () => { filtersOpen = !filtersOpen; if (!filtersOpen) chip = "all"; render(); };
 $("searchBtn").onclick = () => {
   const box = $("search"); box.classList.toggle("hidden");
   if (!box.classList.contains("hidden")) box.focus(); else { search = ""; box.value = ""; render(); }
 };
 $("search").oninput = e => { search = e.target.value.trim(); render(); };
 $("tabs").querySelectorAll("button").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
-$("addForm").onsubmit = e => { e.preventDefault(); const v = $("newTask").value.trim(); if (!v) return; $("newTask").value = ""; add(v); };
 // Get the latest whenever you come back to the page (unless you're in the middle of editing).
 document.addEventListener("visibilitychange", () => { if (!document.hidden && account && $("sheet").classList.contains("hidden")) reload(); });
 
