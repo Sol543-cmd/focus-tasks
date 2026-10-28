@@ -218,6 +218,11 @@
   </header>
   <div class="dots" id="pageDots" aria-label="Pages: Personal and Tasks"><span class="on" role="button" aria-label="Personal"></span><span role="button" aria-label="Tasks"></span></div>
 
+  <section id="boot" class="center">
+    <p><b>Loading Focus...</b></p>
+    <p style="color:var(--muted);font-size:14px">If this stays here, close the app completely (swipe it away) and open it again.
+      If it still won't start, the newest files may not all be uploaded yet: upload index.html, app.js, logic.js and sw.js together.</p>
+  </section>
   <section id="signedOut" class="center hidden">
     <p>Sign in with the Microsoft account your Focus folder is in.</p>
     <button class="primary" id="signin">Sign in</button>
@@ -250,9 +255,9 @@
 
 <div class="sheet hidden" id="sheet"><div class="card" id="sheetCard"></div></div>
 
-<script src="msal-browser.min.js" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
-<script src="config.js"></script>
-<script src="logic.js" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
-<script src="app.js" integrity="sha384-i66tT+JpkgEKC6h23IKRw+JrZ3xR7MR/6QlvnhcADzqrbSiQZYzNb7xYbSu7pGCL"></script>
+<script src="msal-browser.min.js?v=9" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
+<script src="config.js?v=9"></script>
+<script src="logic.js?v=9" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
+<script src="app.js?v=9" integrity="sha384-eUdEUkCBRTAKP13p6wliW5gFeaBroJKXQZgMYKdENamEVom24Q0KifzLKEITOAau"></script>
 </body>
 </html>

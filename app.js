@@ -5,12 +5,12 @@ const CLIENT_ID = String((window.FOCUS_CONFIG || {}).clientId || "PASTE");
 const FOLDER = String((window.FOCUS_CONFIG || {}).folder || "Focus");
 
 // Hardening: the page may only ever touch these three files, in the Focus folder, and nothing else.
-const ALLOWED_FILES = new Set(["task-bin.json", "resolved-tasks.json", "projects.json",
-                               "personal-tasks.json", "personal-finished.json", "personal-projects.json"]);
+const ALLOWED_FILES = new Set(["task-bin.json", "resolved-tasks.json", "projects.json", "task-removed.json",
+                               "personal-tasks.json", "personal-finished.json", "personal-projects.json", "personal-removed.json"]);
 /** Two pages: your tasks, and (swipe) your personal tasks, each with its own three files. */
 const FILESETS = {
-  main: ["task-bin.json", "resolved-tasks.json", "projects.json"],
-  personal: ["personal-tasks.json", "personal-finished.json", "personal-projects.json"]
+  main: ["task-bin.json", "resolved-tasks.json", "projects.json", "task-removed.json"],
+  personal: ["personal-tasks.json", "personal-finished.json", "personal-projects.json", "personal-removed.json"]
 };
 let mode = "personal"; // Focus opens on Personal; swipe left for Tasks
 const files = () => FILESETS[mode];
@@ -56,6 +56,7 @@ async function start() {
   if (account) await reload();
 }
 function showSignedIn(on) {
+  $("boot").classList.add("hidden"); // the app has started
   $("signedOut").classList.toggle("hidden", on);
   $("app").classList.toggle("hidden", !on);
   $("addbar").classList.toggle("hidden", !on);
@@ -93,7 +94,7 @@ async function reload() {
   try {
     setStatus("Loading...");
     const wanted = mode;
-    const loaded = await Promise.all(files().map(readFile));
+    const loaded = await Promise.all(files().slice(0, 3).map(readFile));
     if (wanted !== mode) return; // you switched pages while it loaded
     [bin, resolved, projects] = loaded;
     render();
@@ -108,8 +109,23 @@ async function change(fn, message) {
     setStatus("Saving...");
     const [binFile, doneFile, projectFile] = files();
     const [b, r, p] = await Promise.all([readFile(binFile), readFile(doneFile), readFile(projectFile)]);
+    const before = new Map(b.map(t => [t.Id, JSON.stringify(t)]));
     const touched = fn(b, r, p) || {};
-    for (const t of b) if (!t.CreatedAt) t.CreatedAt = iso(new Date());
+    // Every task added or changed here gets the time of the change (in the same form as your computers use),
+    // so your computers always know it's newer than any old copy, and never mistake it for one.
+    const stamp = new Date().toISOString();
+    for (const t of b) {
+      if (!t.CreatedAt) t.CreatedAt = iso(new Date());
+      if (before.get(t.Id) !== JSON.stringify(t)) t.Modified = stamp;
+    }
+    // Tasks finished or deleted here go in the removal record, so your computers know they're really gone.
+    const gone = [...before.keys()].filter(id => !b.some(t => t.Id === id));
+    if (gone.length) {
+      const removedFile = files()[3];
+      const record = await readFile(removedFile);
+      for (const id of gone) if (!record.some(x => x.Id === id)) record.push({ Id: id, At: stamp });
+      await writeFile(removedFile, record);
+    }
     await writeFile(binFile, b);
     if (touched.resolved) await writeFile(doneFile, r);
     if (touched.projects) await writeFile(projectFile, p);
@@ -885,4 +901,5 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && ac
 // Lets your phone install the page as an app (and open it offline to the last copy).
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => { /* still works as a normal page */ });
 
+$("boot").classList.add("hidden");
 start();
