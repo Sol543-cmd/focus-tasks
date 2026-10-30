@@ -175,7 +175,7 @@ function render() {
   const shown = sortTasks(view === "today" ? tasks.filter(isToday) : view === "undated" ? tasks.filter(isUndated) : tasks, d);
   if (!shown.length) {
     list.innerHTML = `<p class="empty">${view === "today"
-      ? "Nothing set for today. Add a task below, or open one in All and choose Do it: Today."
+      ? "Nothing set for today. Add a task below, or tap Today on a task in All."
       : view === "undated" ? "Every task has a date. Nice."
       : "No tasks here."}</p>`;
     return;
@@ -232,7 +232,22 @@ function row(t) {
   const det = details(t, d, projects);
   body.innerHTML = `<div class="title">${esc(t.Text)}</div>` + (det ? `<div class="details${isOverdue(t, d) ? " overdue" : ""}">${esc(det)}</div>` : "");
   body.onclick = () => openEditor(t.Id);
-  li.append(check, body); return li;
+  // Today and Tomorrow: pick the task for that day (a task already set for one day shows only the other).
+  const days = document.createElement("div"); days.className = "daybtns";
+  const tmr = addDays(d, 1);
+  const setToday = t.PlannedFor === ymd(d) || isDueToday(t, d), setTomorrow = t.PlannedFor === ymd(tmr) || sameDay(dueOf(t), tmr);
+  [[0, "Today", setToday], [1, "Tomorrow", setTomorrow]].forEach(([n, label, already]) => {
+    if (already) return;
+    const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+    b.setAttribute("aria-label", "Add to " + label.toLowerCase());
+    b.onclick = e => {
+      e.stopPropagation();
+      const day = ymd(addDays(today(), n));
+      change(list => { const x = list.find(y => y.Id === t.Id); if (x) { x.PlannedFor = day; x.SnoozedUntil = null; } return {}; }, "Added to " + label.toLowerCase());
+    };
+    days.append(b);
+  });
+  li.append(check, body, days); return li;
 }
 function renderUpcoming(list, tasks) {
   const d = today(), groups = new Map();
@@ -323,17 +338,16 @@ function openEditor(id) {
   const seg = (name, options, value) => `<div class="seg" data-seg="${name}">` +
     options.map(([v, l]) => `<button type="button" data-v="${esc(v)}" aria-pressed="${String(v) === String(value)}">${l}</button>`).join("") + "</div>";
   const steps = JSON.parse(JSON.stringify(t.Subtasks || []));
-  const planChoice = planned === "" ? "" : planned === tdy || planned === tmr ? planned : "other";
+  // Picked for a day other than today: kept, and shown under More options.
+  const otherDay = planned && planned !== tdy ? parseYmd(planned) : null;
   const card = $("sheetCard");
   card.innerHTML = `
     <label>Task</label><textarea id="eText" rows="2">${esc(t.Text)}</textarea>
-    <label>Do it</label>${seg("plan", [["", "Any time"], [tdy, "Today"], [tmr, "Tomorrow"], ["other", "Pick a day"]], planChoice)}
-    <input id="ePlanDay" type="date" class="${planChoice === "other" ? "" : "hidden"}" value="${esc(planChoice === "other" ? planned : "")}" style="margin-top:6px">
+    <label>Due date</label>${dateField("eDue", due, "Like friday or 10/14")}
+    <div class="seg duequick" style="margin-top:6px"><button type="button" data-due="0">Today</button><button type="button" data-due="1">Tomorrow</button><button type="button" data-due="">None</button></div>
+    <label class="switch" style="margin-top:12px"><input type="checkbox" id="eDoToday" ${planned === tdy ? "checked" : ""}> Do this today</label>
     <label>Priority</label>${seg("prio", [["High", "High"], ["Normal", "Normal"], ["Low", "Low"]], t.Priority || "Normal")}
-    <div class="row">
-      <div><label>Due date</label><input id="eDue" type="date" value="${due ? ymd(due) : ""}"></div>
-      <div><label>Reminder</label><input id="eRemind" type="datetime-local" value="${remind ? iso(remind).slice(0, 16) : ""}"></div>
-    </div>
+    <label>Reminder</label><input id="eRemind" type="datetime-local" value="${remind ? iso(remind).slice(0, 16) : ""}">
     <label>Repeats</label><input id="eRepeat" value="${esc(t.Repeat || "")}" placeholder="every friday, weekdays, every month on the 15th">
     <div class="hint" id="eRepeatHint"></div>
     <label>Project</label><select id="eProject"><option value="">None</option>${projects.map(p =>
@@ -346,25 +360,34 @@ function openEditor(id) {
     <label>Estimate (focus sessions)</label>${seg("est", [[0, "Not sure"], [0.34, "Quick"], [1, "1"], [2, "2"], [3, "3"], [4, "4"]], t.Estimate || 0)}
     <label>Status</label>${seg("status", [["", "To do"], ["doing", "Doing"], ["waiting", "Waiting"]], t.Status || "")}
     <input id="eWaiting" class="${t.Status === "waiting" ? "" : "hidden"}" value="${esc(t.WaitingOn || "")}" placeholder="Waiting on whom?" style="margin-top:6px">
-    <label>Snooze until (hidden from lists until then)</label><input id="eSnooze" type="date" value="${snooze && snooze > d ? ymd(snooze) : ""}">
+    <details class="moreopts" ${otherDay || (snooze && snooze > d) ? "open" : ""}><summary>More options</summary>
+      <label>Pick for another day</label>${dateField("ePlanDay", otherDay, "Like monday or 11/3")}
+      <div class="hint">It shows on that day's Today list.</div>
+      <label>Snooze until (hidden from lists until then)</label>${dateField("eSnooze", snooze && snooze > d ? snooze : null, "Like next week")}
+    </details>
     <div class="sheetbar">
       <button type="button" id="eDelete">Delete</button>
       <span><button type="button" id="eCancel">Cancel</button> <button type="button" class="primary" id="eSave">Save</button></span>
     </div>`;
   openSheet();
+  ["eDue", "ePlanDay", "eSnooze"].forEach(wireDateField);
+  card.querySelectorAll(".duequick button").forEach(b => b.onclick = () => {
+    setDateField("eDue", b.dataset.due === "" ? null : addDays(d, +b.dataset.due));
+    repeatHint();
+  });
 
-  card.querySelectorAll(".seg").forEach(s => s.querySelectorAll("button").forEach(b => b.onclick = () => {
+  card.querySelectorAll(".seg:not(.duequick)").forEach(s => s.querySelectorAll("button").forEach(b => b.onclick = () => {
     s.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", "false"));
     b.setAttribute("aria-pressed", "true");
-    if (s.dataset.seg === "plan") $("ePlanDay").classList.toggle("hidden", b.dataset.v !== "other");
     if (s.dataset.seg === "status") $("eWaiting").classList.toggle("hidden", b.dataset.v !== "waiting");
   }));
   const segValue = name => { const b = card.querySelector(`[data-seg="${name}"] [aria-pressed="true"]`); return b ? b.dataset.v : ""; };
   const repeatHint = () => {
-    const txt = $("eRepeat").value.trim(), rule = parseRepeat(txt, $("eDue").value ? parseYmd($("eDue").value) : d);
+    const txt = $("eRepeat").value.trim(), rule = parseRepeat(txt, readDateField("eDue").date || d);
     $("eRepeatHint").textContent = !txt ? "Doesn't repeat" : rule ? describeRepeat(rule) : "Not understood yet";
   };
   $("eRepeat").oninput = repeatHint; repeatHint();
+  $("eDue").addEventListener("change", repeatHint);
   const drawSteps = () => {
     $("eSteps").innerHTML = "";
     steps.forEach((s, i) => {
@@ -410,18 +433,21 @@ function openEditor(id) {
     const text = $("eText").value.trim(); if (!text) { toast("The task needs some text"); return; }
     const repeat = $("eRepeat").value.trim();
     if (repeat && !parseRepeat(repeat, d)) { toast("Couldn't read the repeat"); return; }
-    let plan = segValue("plan"); if (plan === "other") plan = $("ePlanDay").value || "";
+    const dueF = readDateField("eDue"), dayF = readDateField("ePlanDay"), snoozeF = readDateField("eSnooze");
+    if (!dueF.ok || !dayF.ok || !snoozeF.ok) { toast("Couldn't read a date. Try friday, 10/14 or tap the calendar."); return; }
+    // Do this today wins; otherwise the day under More options (if any). Unticking today clears it.
+    const plan = $("eDoToday").checked ? tdy : dayF.date && ymd(dayF.date) !== tdy ? ymd(dayF.date) : "";
     const status = segValue("status");
     const edits = {
       Text: text, PlannedFor: plan, Priority: segValue("prio") || "Normal",
-      Due: $("eDue").value ? iso(parseYmd($("eDue").value)) : null,
+      Due: dueF.date ? iso(dueF.date) : null,
       RemindAt: $("eRemind").value ? $("eRemind").value + ":00" : null,
       Repeat: repeat, Project: $("eProject").value === "__new" ? "" : $("eProject").value,
       Section: $("eSection").disabled ? "" : $("eSection").value,
       Tags: $("eTags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean),
       Subtasks: steps, Notes: $("eNotes").value, Estimate: +segValue("est") || 0,
       Status: status, WaitingOn: status === "waiting" ? $("eWaiting").value.trim() : "",
-      SnoozedUntil: $("eSnooze").value ? iso(parseYmd($("eSnooze").value)) : null
+      SnoozedUntil: snoozeF.date ? iso(snoozeF.date) : null
     };
     if (repeat && !edits.Due) edits.Due = iso(nextDate(parseRepeat(repeat, d), addDays(d, -1)));
     if (status === "waiting" && t.Status !== "waiting") edits.WaitingSince = iso(new Date());
@@ -435,6 +461,86 @@ function openEditor(id) {
     }, "Saved");
   };
 }
+
+// ---------- Date fields: type a day, or tap for a small calendar ----------
+
+const FIELD_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** How a date shows in a field ("Oct 30, 2026"), in a form the field reads back exactly. */
+function fmtField(date) { return date ? `${FIELD_MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}` : ""; }
+
+/** A date field: a text box (typing "friday" or "10/14" works) that opens a small calendar when tapped. */
+function dateField(id, date, placeholder) {
+  return `<div class="datefield"><input id="${id}" value="${esc(fmtField(date))}" placeholder="${esc(placeholder || "")}" autocomplete="off" enterkeyhint="done">` +
+         `<div class="dpop hidden" id="${id}Pop"></div></div>`;
+}
+
+/** What a date field holds: { ok, date }. Empty is fine (date null); text it can't read is not ok. */
+function readDateField(id) {
+  const text = ($(id).value || "").trim();
+  if (!text) return { ok: true, date: null };
+  const exact = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/i.exec(text);
+  if (exact) {
+    const m = FIELD_MONTHS.findIndex(x => x.toLowerCase() === exact[1].toLowerCase());
+    if (m >= 0) return { ok: true, date: new Date(+exact[3], m, +exact[2]) };
+  }
+  if (parseYmd(text)) return { ok: true, date: parseYmd(text) };
+  const w = words(text), hit = tryDate(w, 0, today(), false);
+  return hit && hit.used === w.length ? { ok: true, date: startOfDay(hit.date) } : { ok: false, date: null };
+}
+
+function setDateField(id, date) {
+  $(id).value = fmtField(date);
+  $(id).dispatchEvent(new Event("change"));
+  closeDatePop(id);
+}
+
+function closeDatePop(id) { const pop = $(id + "Pop"); if (pop) pop.classList.add("hidden"); }
+
+/** Tapping the field opens the calendar (month arrows, today ringed, the chosen day filled); picking a day fills the field. */
+function wireDateField(id) {
+  const input = $(id), pop = $(id + "Pop");
+  if (!input || !pop) return;
+  let shown = null;
+  const draw = () => {
+    const chosen = readDateField(id).date, now = today();
+    const first = new Date(shown.getFullYear(), shown.getMonth(), 1), lead = (first.getDay() + 6) % 7; // weeks start on Monday
+    let cells = "";
+    for (let i = 0; i < lead; i++) cells += "<span></span>";
+    for (let day = 1; day <= daysInMonth(shown.getFullYear(), shown.getMonth()); day++) {
+      const date = new Date(shown.getFullYear(), shown.getMonth(), day);
+      const cls = [sameDay(date, now) ? "today" : "", sameDay(date, chosen) ? "chosen" : ""].join(" ").trim();
+      cells += `<button type="button" data-day="${day}" class="${cls}">${day}</button>`;
+    }
+    pop.innerHTML = `<div class="dphead"><button type="button" data-step="-1" aria-label="Previous month">‹</button>` +
+      `<b>${shown.toLocaleDateString([], { month: "long", year: "numeric" })}</b>` +
+      `<button type="button" data-step="1" aria-label="Next month">›</button></div>` +
+      `<div class="dpgrid">${["M", "T", "W", "T", "F", "S", "S"].map(x => `<i>${x}</i>`).join("")}${cells}</div>`;
+    pop.querySelectorAll("[data-step]").forEach(b => b.onclick = e => { e.stopPropagation(); shown = addMonths(shown, +b.dataset.step); draw(); });
+    pop.querySelectorAll("[data-day]").forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      setDateField(id, new Date(shown.getFullYear(), shown.getMonth(), +b.dataset.day));
+    });
+  };
+  input.addEventListener("click", () => {
+    if (!pop.classList.contains("hidden")) return;
+    document.querySelectorAll(".dpop").forEach(p => p.classList.add("hidden"));
+    const chosen = readDateField(id).date || today();
+    shown = new Date(chosen.getFullYear(), chosen.getMonth(), 1);
+    draw();
+    pop.classList.remove("hidden");
+  });
+  input.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); closeDatePop(id); input.blur(); } });
+  // Typed text that reads as a date is tidied into the field's format when you leave it.
+  input.addEventListener("blur", () => { const r = readDateField(id); if (r.ok && r.date) input.value = fmtField(r.date); });
+  pop.addEventListener("mousedown", e => e.preventDefault()); // keep the typing box focused while using the calendar
+}
+
+// Tapping anywhere else closes an open calendar.
+document.addEventListener("click", e => {
+  if (e.target.closest && e.target.closest(".datefield")) return;
+  document.querySelectorAll(".dpop").forEach(p => p.classList.add("hidden"));
+});
 
 // ---------- Sheets ----------
 
@@ -622,15 +728,17 @@ function editEvent(ev, day) {
   const card = $("sheetCard");
   card.innerHTML = `<div class="evform"><label>${ev ? "Event" : "New event"}</label>
     <input id="eTitle" value="${esc(ev ? ev.title : "")}" placeholder="What" autocomplete="off">
-    <label>Day</label><input id="eDate" type="date" value="${ymd(d)}">
+    <label>Day</label>${dateField("eDate", d, "Like friday or 10/14")}
     <label class="switch" style="margin-top:12px"><input type="checkbox" id="eAll" ${ev && ev.allDay ? "checked" : ""}> All day</label>
     <div class="two" id="eTimes"><div><label>From</label><input id="eFrom" type="time" value="${from}"></div><div><label>To</label><input id="eTo" type="time" value="${to}"></div></div></div>
     <div class="sheetbar">${ev ? `<button type="button" id="eDelete">Delete</button>` : "<span></span>"}<span><button type="button" id="eCancel">Cancel</button> <button type="button" class="primary" id="eSave">Save</button></span></div>`;
   const times = () => $("eTimes").classList.toggle("hidden", $("eAll").checked);
   times(); $("eAll").onchange = times;
+  wireDateField("eDate");
   $("eCancel").onclick = () => openCalendar(day, "day");
   $("eSave").onclick = async () => {
-    const f = { title: $("eTitle").value.trim() || "(No title)", date: $("eDate").value, allDay: $("eAll").checked, from: $("eFrom").value, to: $("eTo").value };
+    const picked = readDateField("eDate");
+    const f = { title: $("eTitle").value.trim() || "(No title)", date: picked.ok && picked.date ? ymd(picked.date) : "", allDay: $("eAll").checked, from: $("eFrom").value, to: $("eTo").value };
     if (!f.date || (!f.allDay && f.to <= f.from)) { toast("Check the day and times."); return; }
     try {
       if (ev) await gFetch("/events/" + encodeURIComponent(ev.id), { method: "PATCH", body: JSON.stringify(gBody(f)) });

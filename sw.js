@@ -1,8 +1,8 @@
 // Focus Tasks: the small helper that lets your phone install the page as an app.
 // It only handles the page's own files (always fetching the newest copy, with the last copy
 // as a fallback when you're offline). It never touches sign-in or your OneDrive data.
-const CACHE = "focus-tasks-v9";
-const FILES = ["./", "index.html", "app.js?v=9", "logic.js?v=9", "config.js?v=9", "msal-browser.min.js?v=9", "manifest.json", "icon-192.png", "icon-512.png"];
+const CACHE = "focus-tasks-v10";
+const FILES = ["./", "index.html", "app.js?v=10", "logic.js?v=10", "config.js?v=10", "msal-browser.min.js?v=10", "manifest.json", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(FILES)).then(() => self.skipWaiting()));

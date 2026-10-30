@@ -122,6 +122,22 @@
   .seg button { padding: 7px 12px; font-size: 14px; }
   .seg button[aria-pressed="true"] { background: var(--tint); color: var(--accent); font-weight: 600; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  /* Today / Tomorrow on each task */
+  .daybtns { display: flex; gap: 4px; flex-shrink: 0; align-self: center; }
+  .daybtns button { background: transparent; border: 1px solid var(--line); color: var(--muted); font-size: 12px; padding: 4px 8px; border-radius: 8px; }
+  li.task .body { flex: 1; min-width: 0; }
+  /* Date fields and their small calendar */
+  .datefield { position: relative; }
+  .dpop { margin-top: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; max-width: 320px; }
+  .dphead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .dphead button { background: transparent; border: 0; font-size: 20px; padding: 2px 12px; color: var(--text); }
+  .dpgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+  .dpgrid i { font-style: normal; font-size: 11px; color: var(--muted); padding: 2px 0; }
+  .dpgrid button { background: transparent; border: 1px solid transparent; padding: 7px 0; font-size: 14px; border-radius: 50%; color: var(--text); }
+  .dpgrid button.today { border-color: var(--accent); }
+  .dpgrid button.chosen { background: var(--accent); color: #fff; font-weight: 600; }
+  details.moreopts { margin-top: 14px; }
+  details.moreopts summary { color: var(--muted); font-size: 14px; cursor: pointer; }
   .steps li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
   .steps li span { flex: 1; }
   .sheetbar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
@@ -255,9 +271,9 @@
 
 <div class="sheet hidden" id="sheet"><div class="card" id="sheetCard"></div></div>
 
-<script src="msal-browser.min.js?v=9" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
-<script src="config.js?v=9"></script>
-<script src="logic.js?v=9" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
-<script src="app.js?v=9" integrity="sha384-eUdEUkCBRTAKP13p6wliW5gFeaBroJKXQZgMYKdENamEVom24Q0KifzLKEITOAau"></script>
+<script src="msal-browser.min.js?v=10" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
+<script src="config.js?v=10"></script>
+<script src="logic.js?v=10" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
+<script src="app.js?v=10" integrity="sha384-Bb7uwSu3QhmUdbarS8DjXuKMbflUFv1iNqKddF7nxJsEb6RQL1wwe8s5JF6ZYb64"></script>
 </body>
 </html>
