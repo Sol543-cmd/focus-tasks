@@ -232,22 +232,7 @@ function row(t) {
   const det = details(t, d, projects);
   body.innerHTML = `<div class="title">${esc(t.Text)}</div>` + (det ? `<div class="details${isOverdue(t, d) ? " overdue" : ""}">${esc(det)}</div>` : "");
   body.onclick = () => openEditor(t.Id);
-  // Today and Tomorrow: pick the task for that day (a task already set for one day shows only the other).
-  const days = document.createElement("div"); days.className = "daybtns";
-  const tmr = addDays(d, 1);
-  const setToday = t.PlannedFor === ymd(d) || isDueToday(t, d), setTomorrow = t.PlannedFor === ymd(tmr) || sameDay(dueOf(t), tmr);
-  [[0, "Today", setToday], [1, "Tomorrow", setTomorrow]].forEach(([n, label, already]) => {
-    if (already) return;
-    const b = document.createElement("button"); b.type = "button"; b.textContent = label;
-    b.setAttribute("aria-label", "Add to " + label.toLowerCase());
-    b.onclick = e => {
-      e.stopPropagation();
-      const day = ymd(addDays(today(), n));
-      change(list => { const x = list.find(y => y.Id === t.Id); if (x) { x.PlannedFor = day; x.SnoozedUntil = null; } return {}; }, "Added to " + label.toLowerCase());
-    };
-    days.append(b);
-  });
-  li.append(check, body, days); return li;
+  li.append(check, body); return li;
 }
 function renderUpcoming(list, tasks) {
   const d = today(), groups = new Map();
