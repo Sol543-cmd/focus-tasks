@@ -4,14 +4,15 @@
   Reads and writes the same files Focus uses in your OneDrive "Focus" folder
   (task-bin.json, resolved-tasks.json, projects.json), so phone and computers stay in step.
   Hardened version: no outside code, sign-in remembered on this phone only, and only Focus's
-  three task files can be read or written. Setup: put your Application (client) ID in config.js.
+  task files can be read or written (plus Training: it reads Focus/training and the Greek files, and
+  writes only this phone's own progress file and your Greek practice). Setup: put your Application (client) ID in config.js.
   It talks only to Microsoft sign-in and Microsoft's OneDrive service, as you.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <!-- Hardening: this page may only load its own files and talk to Microsoft sign-in and OneDrive. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://www.googleapis.com https://login.microsoftonline.com https://login.live.com https://graph.microsoft.com https://*.sharepoint.com https://*.1drv.com https://*.livefilestore.com https://*.microsoftpersonalcontent.com; frame-src https://login.microsoftonline.com https://login.live.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src https://www.googleapis.com https://login.microsoftonline.com https://login.live.com https://graph.microsoft.com https://*.sharepoint.com https://*.1drv.com https://*.livefilestore.com https://*.microsoftpersonalcontent.com; frame-src https://login.microsoftonline.com https://login.live.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -20,6 +21,7 @@
 <meta name="apple-mobile-web-app-title" content="Tasks">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="training.css?v=10" integrity="sha384-gQk8tlzNY2K/ldgCFJBEVvuqumv6tt9aRtXK+9Am+t11WeyiJSs8iKfdeDSqSRQm">
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Focus Tasks</title>
@@ -122,19 +124,6 @@
   .seg button { padding: 7px 12px; font-size: 14px; }
   .seg button[aria-pressed="true"] { background: var(--tint); color: var(--accent); font-weight: 600; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
-  li.task .body { flex: 1; min-width: 0; }
-  /* Date fields and their small calendar */
-  .datefield { position: relative; }
-  .dpop { margin-top: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; max-width: 320px; }
-  .dphead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-  .dphead button { background: transparent; border: 0; font-size: 20px; padding: 2px 12px; color: var(--text); }
-  .dpgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
-  .dpgrid i { font-style: normal; font-size: 11px; color: var(--muted); padding: 2px 0; }
-  .dpgrid button { background: transparent; border: 1px solid transparent; padding: 7px 0; font-size: 14px; border-radius: 50%; color: var(--text); }
-  .dpgrid button.today { border-color: var(--accent); }
-  .dpgrid button.chosen { background: var(--accent); color: #fff; font-weight: 600; }
-  details.moreopts { margin-top: 14px; }
-  details.moreopts summary { color: var(--muted); font-size: 14px; cursor: pointer; }
   .steps li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
   .steps li span { flex: 1; }
   .sheetbar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
@@ -268,9 +257,12 @@
 
 <div class="sheet hidden" id="sheet"><div class="card" id="sheetCard"></div></div>
 
-<script src="msal-browser.min.js?v=11" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
-<script src="config.js?v=11"></script>
-<script src="logic.js?v=11" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
-<script src="app.js?v=11" integrity="sha384-0ZVexVA1XV9CBLPwcQXQ8EOAmJ1YloWonGH2UNwbM3t2deAxXU6ib62T3vfLOgbx"></script>
+<script src="msal-browser.min.js?v=10" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
+<script src="config.js?v=10"></script>
+<script src="logic.js?v=10" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
+<script src="app.js?v=10" integrity="sha384-eUdEUkCBRTAKP13p6wliW5gFeaBroJKXQZgMYKdENamEVom24Q0KifzLKEITOAau"></script>
+<script src="training-data.js?v=10" integrity="sha384-91gbmC6DnOUzNCzFDzBPm0EWFz7MxmhU1Ml9fWJ49/qHuJA6qayUUnYKB1kn9ef1"></script>
+<script src="training-reader.js?v=10" integrity="sha384-G85r2ifB75CYfEXmo9+JV3HMXdjeRYvzQ1Z5mkpz0Fdv20Sk1nspuZSAl9symByF"></script>
+<script src="training-ui.js?v=10" integrity="sha384-Oblp2V+WFRUo9tBHXRwx2beFsz7G8KbAFV/t3yo9HsKPgqXw9b5Y78DxQAXjFwkc"></script>
 </body>
 </html>

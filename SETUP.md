@@ -8,6 +8,30 @@ meetings and plan, and three themes (under ⋯).
 
 (Hardened version details below.)
 
+## New: Training (the 📖 button at the top)
+
+Your Training from Focus, on your phone and Boox: today's lesson, Books practice, Flashcards, Timeline,
+Greek words, Alphabet, Greek concepts, the Concept quiz, your library (with reading and highlights) and this
+week's numbers, all on one dashboard.
+
+- **Same progress everywhere.** This phone saves to its own file, `Focus/training/progress-web-….json`, the
+  same way each computer has its own. Your computers read it, so a lesson finished here is finished there
+  (and the other way round). Nothing here can overwrite a computer's progress.
+- **Offline.** Your books, chapter packs and pictures are kept on the phone. Study without a connection;
+  your answers save to OneDrive when you're back online (the dot at the top says Synced, Waiting to save or Offline).
+- **Reading** uses Flint's page turning: tap the right side or swipe to turn, tap the middle for the bar,
+  **Aa** for font, size, page color (white, cream, green, dark, black) and margins. Select text to highlight.
+- **Boox / e-ink:** Training settings (⚙), E-ink screen: On (Auto turns it on for Boox). No animations,
+  black on white, instant page turns.
+- Lesson days, days off and adding books stay on your computer.
+
+**Upload these files** with the rest (all at once): `training.css`, `training-data.js`,
+`training-reader.js`, `training-ui.js`, and the **`fonts` folder** (drag the folder in), plus the updated
+`index.html` and `sw.js`. Keep your own `config.js`.
+
+The first time you open Training it downloads your books (do it on Wi-Fi: pictures can be large).
+
+
 Ten files (plus your config.js) go into your GitHub repository (upload them all at once):
 
 | File | What it is |
@@ -27,8 +51,9 @@ Ten files (plus your config.js) go into your GitHub repository (upload them all 
 - **Tamper checks.** The browser checks that the page's code files are exactly the ones you
   were given, and refuses to run them if anything has changed.
 - **Talks only to Microsoft.** The page can only connect to Microsoft sign-in and OneDrive.
-- **Only Focus's files.** The page refuses to read or write anything except Focus's three task
-  files (task-bin.json, resolved-tasks.json, projects.json) in the Focus folder.
+- **Only Focus's files.** The page refuses to read or write anything except Focus's task files in the
+  Focus folder. Training may read Focus/training and the Greek files, and may write only this phone's own
+  progress file and your Greek practice (vocab.json, alphabet.json, concepts.json).
 - **Stays signed in.** Your sign-in is remembered on this phone only (keep a screen lock on it).
   Every so often Microsoft does a quick check that passes through its page and straight back,
   usually without typing. Tap ⎋ to sign out and forget it.
@@ -77,3 +102,22 @@ Focus link in Chrome, and choose Install app (or Add to Home screen) again. Your
 ## New icon and look
 The icon is now round, so it looks clean in your phone's circle. Phones only pick up a new icon when the app is
 installed again: remove Focus from your home screen, open your Focus link in Chrome, and install it again.
+
+## Google Calendar for Personal (two-way)
+Personal's calendar is your Google Calendar: you see your events there (Day or Month), and events you add, change or
+delete in the app change in Google too. The Tasks page keeps your work calendar from Focus. One-time setup (about 10 minutes):
+
+1. Go to https://console.cloud.google.com and sign in with the Google account whose calendar you want.
+2. Create a project (top bar, "Select a project", then "New project"); call it Focus.
+3. Open "APIs & Services", then "Library", search for "Google Calendar API", and click Enable.
+4. Open "APIs & Services", then "OAuth consent screen" (or "Google Auth Platform"): choose External, name it Focus,
+   use your email address, and under "Audience" (or "Test users") add your own Google address.
+5. Open "Credentials", then "Create credentials", then "OAuth client ID". Choose "Web application".
+   - Authorized JavaScript origins: your site, like https://yourname.github.io
+   - Authorized redirect URIs: the exact address you open the app at, like https://yourname.github.io/focus-tasks/
+6. Copy the Client ID it shows (it ends in .apps.googleusercontent.com).
+7. In the app: swipe to Personal, tap the three dots, paste the Client ID under Google Calendar, and tap Connect.
+   Google may say the app isn't verified (it's your own): tap Continue.
+
+Google's sign-in lasts about an hour; when it runs out, the calendar shows a Connect button (usually one tap).
+If you'd rather keep the Client ID in config.js, add:  googleClientId: "your-id.apps.googleusercontent.com",
