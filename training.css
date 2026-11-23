@@ -126,6 +126,8 @@ body.trp-open { overflow: hidden; }
 .tr-foot { color: var(--muted); font-size: 12px; text-align: center; margin-top: 26px; }
 .tr-empty { text-align: center; padding: 60px 16px; color: var(--muted); }
 .tr-empty b { color: var(--text); font-size: 18px; }
+.tr-stepline { color: var(--tr-train); font-weight: 600; }
+.tr-errline { color: var(--tr-bad); overflow-wrap: anywhere; }
 .tr-banner { border: 1px solid #D9A441; background: color-mix(in srgb, #D9A441 12%, var(--panel)); border-radius: 12px; padding: 12px 14px; font-size: 14.5px; margin-bottom: 8px; }
 .tr-btn { font: inherit; font-size: 15px; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 11px; padding: 11px 18px; min-height: 46px; cursor: pointer; }
 .tr-btn.primary { background: var(--tr-train); border-color: var(--tr-train); color: var(--tr-ontrain); font-weight: 600; }

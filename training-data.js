@@ -62,10 +62,34 @@ T.DB = DB;
 
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0/me/drive/root:/";
 /** The paths this page may read; it may only write its own progress file and the Greek progress files. */
-const READ_OK = p => /^training\/(course\.json|progress-[A-Za-z0-9_-]{1,80}\.json|covers\/[A-Za-z0-9 ._-]{1,120}|[A-Za-z0-9_-]{1,80}\/(book\.json|ch\d{2,3}\.focuspack|media\/[A-Za-z0-9 ._-]{1,120}))$/.test(p)
-  || /^(vocab|alphabet|concepts)\.json$/.test(p) || /^greek-concepts\/[A-Za-z0-9 ._-]{1,120}\.quizpack$/.test(p);
+/** An ordinary file name: no folders, no "..", no control characters. */
+const NAME = "[^/\\\\\\u0000-\\u001f:*?\"<>|]{1,160}";
+const okName = n => new RegExp("^" + NAME + "$", "u").test(n) && n !== "." && n !== "..";
+const DIR = "[A-Za-z0-9_\\p{L}\\p{N}-]{1,80}";
+const READ_OK = p => {
+  const m = /^training\/(.+)$/.exec(p);
+  if (m) {
+    const parts = m[1].split("/");
+    if (parts.length === 1) return /^(course\.json|progress-.+\.json)$/.test(parts[0]) && okName(parts[0]);
+    if (parts.length === 2 && parts[0] === "covers") return okName(parts[1]);
+    if (parts.length === 2) return new RegExp("^" + DIR + "$", "u").test(parts[0]) && /^(book\.json|ch\d{2,3}\.focuspack)$/.test(parts[1]);
+    if (parts.length === 3 && parts[1] === "media") return new RegExp("^" + DIR + "$", "u").test(parts[0]) && okName(parts[2]);
+    return false;
+  }
+  if (/^(vocab|alphabet|concepts)\.json$/.test(p)) return true;
+  const q = /^greek-concepts\/(.+\.quizpack)$/i.exec(p);
+  return !!q && okName(q[1]);
+};
 const WRITE_OK = p => p === "training/" + MY_LOG || /^(vocab|alphabet|concepts)\.json$/.test(p);
-const LIST_OK = p => /^(training|training\/covers|training\/[A-Za-z0-9_-]{1,80}|training\/[A-Za-z0-9_-]{1,80}\/media|greek-concepts)$/.test(p);
+const LIST_OK = p => new RegExp("^(training|training/covers|training/" + DIR + "|training/" + DIR + "/media|greek-concepts)$", "u").test(p);
+/** Every OneDrive request gives up after a while instead of hanging forever. */
+async function graph(url, init = {}, ms = 90000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { ...init, signal: ctl.signal, cache: "no-store" }); }
+  catch (e) { throw new Error(e.name === "AbortError" ? "OneDrive took too long to answer" : e.message); }
+  finally { clearTimeout(timer); }
+}
 function folderName() {
   const f = String((window.FOCUS_CONFIG || {}).folder || "Focus");
   if (!/^[A-Za-z0-9 _-]{1,64}$/.test(f)) throw new Error("Blocked: the folder name in config.js isn't allowed.");
@@ -79,7 +103,7 @@ T.remote = window.TRAINING_REMOTE || {
     let url = GRAPH_ROOT + enc(path) + ":/children?$select=name,lastModifiedDateTime,eTag,size,file,folder&$top=999";
     const out = [];
     while (url) {
-      const res = await fetch(url, { headers: { Authorization: "Bearer " + await token() }, cache: "no-store" });
+      const res = await graph(url, { headers: { Authorization: "Bearer " + await token() } }, 45000);
       if (res.status === 404) return [];
       if (!res.ok) throw new Error(`Couldn't list ${path} (${res.status})`);
       const j = await res.json();
@@ -90,14 +114,14 @@ T.remote = window.TRAINING_REMOTE || {
   },
   async get(path, binary) {
     if (!READ_OK(path)) throw new Error("Blocked: " + path);
-    const res = await fetch(GRAPH_ROOT + enc(path) + ":/content", { headers: { Authorization: "Bearer " + await token() }, cache: "no-store" });
+    const res = await graph(GRAPH_ROOT + enc(path) + ":/content", { headers: { Authorization: "Bearer " + await token() } }, binary ? 120000 : 90000);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`Couldn't read ${path} (${res.status})`);
     return binary ? await res.blob() : await res.text();
   },
   async put(path, text) {
     if (!WRITE_OK(path)) throw new Error("Blocked: " + path);
-    const res = await fetch(GRAPH_ROOT + enc(path) + ":/content", {
+    const res = await graph(GRAPH_ROOT + enc(path) + ":/content", {
       method: "PUT", headers: { Authorization: "Bearer " + await token(), "Content-Type": "application/json" }, body: text
     });
     if (!res.ok) throw new Error(`Couldn't save ${path} (${res.status})`);
@@ -112,7 +136,7 @@ T.mine = [];          // this device's own events (also in T.events)
 T.books = {};         // course id → { book: [...paras], packs: {chapter: pack} }
 T.greek = { vocab: [], alphabet: [], concepts: [], quizzes: [] };
 T.media = {};         // "courseId/name" → object URL
-T.status = { text: "", busy: false, lastSync: null, offline: false, pending: false };
+T.status = { text: "", busy: false, lastSync: null, offline: false, pending: false, error: "", step: "", media: "" };
 const listeners = new Set();
 T.onChange = fn => listeners.add(fn);
 const changed = () => listeners.forEach(fn => { try { fn(); } catch (e) { console.error(e); } });
@@ -147,124 +171,171 @@ async function loadBook(id) {
   if (b) T.books[id] = b;
 }
 
-/** The newest from OneDrive: what changed since last time is downloaded and kept here for offline use. */
-let syncing = null;
+/** The newest from OneDrive: what changed since last time is downloaded and kept here for offline use.
+ *  The screen updates as each part arrives; pictures come last, in the background. */
+let syncing = null, mediaRun = null;
 T.sync = (opts = {}) => syncing || (syncing = runSync(opts).finally(() => { syncing = null; }));
+const step = text => { T.status.step = text; changed(); };
 async function runSync({ quick = false } = {}) {
-  if (typeof account !== "undefined" && !account && !window.TRAINING_REMOTE) return;
-  T.status.busy = true; T.status.text = "Syncing…"; changed();
+  if (typeof account !== "undefined" && !account && !window.TRAINING_REMOTE) { T.status.error = "Sign in first (on the Tasks page)."; changed(); return; }
+  T.status.busy = true; T.status.error = ""; T.status.text = "Syncing…"; step("Checking OneDrive…");
+  const skipped = [];
   try {
-    await pushMine();
-    await pushGreek();
+    try { await pushMine(); } catch (e) { skipped.push("saving your progress: " + e.message); }
+    try { await pushGreek(); } catch (e) { skipped.push("saving Greek: " + e.message); }
     const etags = (await DB.get("kv", "etags")) || {};
     const fresh = async (path, etag, binary) => {
       if (etags[path] === etag) return null;
       const body = await T.remote.get(path, binary);
       return { body, done: () => { etags[path] = etag; } };
     };
+    const saveTags = () => DB.put("kv", "etags", etags);
     // The library and every device's progress.
     const top = await T.remote.list("training");
+    if (!top.length) throw new Error(`No training folder found in OneDrive (${folderName()}/training). Open Training on your computer once so Focus makes it, and let OneDrive sync.`);
     const byName = Object.fromEntries(top.map(x => [x.name, x]));
-    if (byName["course.json"]) {
-      const f = await fresh("training/course.json", byName["course.json"].etag);
-      if (f) { const cfg = parse(f.body); if (cfg) { T.config = cfg; await DB.put("kv", "config", cfg); f.done(); } }
+    if (!byName["course.json"]) throw new Error(`${folderName()}/training has no course.json yet. Add a book in Training on your computer and let OneDrive sync.`);
+    step("Getting your library…");
+    const f = await fresh("training/course.json", byName["course.json"].etag);
+    if (f) {
+      const cfg = parse(f.body);
+      if (!cfg || !Array.isArray(cfg.Courses)) throw new Error("course.json is busy syncing; trying again in a minute.");
+      T.config = cfg; await DB.put("kv", "config", cfg); f.done(); await saveTags();
+      invalidate(); changed();
     }
+    step("Getting your progress…");
     let others = (await DB.get("kv", "others")) || [];
     const byDevice = {};
     for (const e of others) (byDevice[e.Device] ||= []).push(e);
     let logsChanged = false;
     for (const it of top.filter(x => /^progress-.*\.json$/i.test(x.name) && !/conflict/i.test(x.name))) {
       const path = "training/" + it.name;
-      if (it.name === MY_LOG) {
-        // Our own log on OneDrive: after clearing this device's storage, it brings your progress back.
-        if (!T.mine.length) {
-          const f = await fresh(path, it.etag);
-          const list = f && parse(f.body, []);
-          if (Array.isArray(list)) { T.mine = list; await DB.put("kv", "mine", T.mine); f.done(); logsChanged = true; }
+      try {
+        if (it.name === MY_LOG) {
+          // Our own log on OneDrive: after clearing this device's storage, it brings your progress back.
+          if (!T.mine.length) {
+            const g = await fresh(path, it.etag);
+            const list = g && parse(g.body, []);
+            if (Array.isArray(list)) { T.mine = list; await DB.put("kv", "mine", T.mine); g.done(); logsChanged = true; }
+          }
+          continue;
         }
-        continue;
-      }
-      const f = await fresh(path, it.etag);
-      if (!f) continue;
-      const list = parse(f.body, []);
-      if (!Array.isArray(list)) continue; // OneDrive still writing it: next time
-      const dev = list[0]?.Device || it.name;
-      for (const k of Object.keys(byDevice)) if (k === dev) delete byDevice[k];
-      byDevice[dev] = list;
-      f.done(); logsChanged = true;
+        const g = await fresh(path, it.etag);
+        if (!g) continue;
+        const list = parse(g.body, []);
+        if (!Array.isArray(list)) continue; // OneDrive still writing it: next time
+        const dev = list[0]?.Device || it.name;
+        delete byDevice[dev];
+        byDevice[dev] = list;
+        g.done(); logsChanged = true;
+      } catch (e) { skipped.push(it.name + ": " + e.message); }
     }
     if (logsChanged) {
       others = Object.values(byDevice).flat();
       await DB.put("kv", "others", others);
       T.events = mergeEvents(others, T.mine);
+      await saveTags(); invalidate(); changed();
     }
-    // Each book: its text (book.json), chapter packs, pictures and cover.
-    for (const c of T.config.Courses || []) {
-      const dir = T.safe(c.Id);
-      if (!/^[A-Za-z0-9_-]{1,80}$/.test(dir)) continue;
-      const files = await T.remote.list("training/" + dir);
+    // Each book: its text (book.json) and chapter packs.
+    const courses = T.config.Courses || [];
+    const mediaTodo = [];
+    for (let n = 0; n < courses.length; n++) {
+      const c = courses[n], dir = T.safe(c.Id);
+      step(`Getting ${c.Title || "book"} (${n + 1} of ${courses.length})…`);
+      let files;
+      try { files = await T.remote.list("training/" + dir); }
+      catch (e) { skipped.push((c.Title || c.Id) + ": " + e.message); continue; }
+      if (!files.length) skipped.push(`${c.Title || c.Id}: no folder training/${dir} in OneDrive yet`);
       const entry = T.books[c.Id] || { book: [], packs: {} };
       let bookChanged = false;
       for (const it of files) {
         const path = `training/${dir}/${it.name}`;
-        if (it.name === "book.json" || /^ch\d{2,3}\.focuspack$/.test(it.name)) {
-          const f = await fresh(path, it.etag);
-          if (!f) continue;
-          const data = parse(f.body);
-          if (data === undefined) continue;
-          if (it.name === "book.json") entry.book = data || [];
+        if (it.name !== "book.json" && !/^ch\d{2,3}\.focuspack$/.test(it.name)) continue;
+        try {
+          const g = await fresh(path, it.etag);
+          if (!g) continue;
+          const data = parse(g.body);
+          if (data === undefined) { skipped.push(it.name + " is busy syncing"); continue; }
+          if (it.name === "book.json") entry.book = Array.isArray(data) ? data : [];
           else if (data && data.chapter) entry.packs[data.chapter] = data;
-          f.done(); bookChanged = true;
-        }
+          g.done(); bookChanged = true;
+        } catch (e) { skipped.push(`${c.Title || c.Id}, ${it.name}: ${e.message}`); }
       }
+      if (files.length && !files.some(x => x.name === "book.json")) skipped.push(`${c.Title || c.Id}: no book.json (open the book in Training on your computer once)`);
       // Packs removed on the computer leave here too.
-      const names = new Set(files.map(x => x.name));
-      for (const ch of Object.keys(entry.packs)) if (!names.has(`ch${String(ch).padStart(2, "0")}.focuspack`) && !names.has(`ch${ch}.focuspack`)) { delete entry.packs[ch]; bookChanged = true; }
-      if (bookChanged) { T.books[c.Id] = entry; await DB.put("kv", "book:" + c.Id, entry); bookCache.delete(c.Id); }
-      else T.books[c.Id] = entry;
-      if (!quick && files.some(x => x.folder && x.name === "media")) {
-        const media = await T.remote.list(`training/${dir}/media`);
-        for (const it of media) {
-          const path = `training/${dir}/media/${it.name}`;
-          if (etags[path] === it.etag && await DB.get("files", path)) continue;
-          const blob = await T.remote.get(path, true);
-          if (blob) { await DB.put("files", path, blob); etags[path] = it.etag; }
-        }
+      if (files.length) {
+        const names = new Set(files.map(x => x.name));
+        for (const ch of Object.keys(entry.packs)) if (!names.has(`ch${String(ch).padStart(2, "0")}.focuspack`) && !names.has(`ch${ch}.focuspack`)) { delete entry.packs[ch]; bookChanged = true; }
       }
-    }
-    if (!quick && byName.covers) {
-      for (const it of await T.remote.list("training/covers")) {
-        const path = "training/covers/" + it.name;
-        if (etags[path] === it.etag && await DB.get("files", path)) continue;
-        const blob = await T.remote.get(path, true);
-        if (blob) { await DB.put("files", path, blob); etags[path] = it.etag; }
-      }
+      T.books[c.Id] = entry;
+      if (bookChanged) { await DB.put("kv", "book:" + c.Id, entry); bookCache.delete(c.Id); await saveTags(); invalidate(); changed(); }
+      if (files.some(x => x.folder && x.name === "media")) mediaTodo.push(`training/${dir}/media`);
     }
     // Greek: your words, alphabet and concepts (shared with your computers), and the concept quiz packs.
+    step("Getting Greek…");
     for (const g of ["vocab", "alphabet", "concepts"]) {
-      const f = await T.remote.get(g + ".json");
-      const list = parse(f, []);
-      if (Array.isArray(list)) { T.greek[g] = mergeGreekIn(g, list); await DB.put("kv", "greek-" + g, T.greek[g]); }
+      try {
+        const list = parse(await T.remote.get(g + ".json"), []);
+        if (Array.isArray(list)) { T.greek[g] = mergeGreekIn(g, list); await DB.put("kv", "greek-" + g, T.greek[g]); }
+      } catch (e) { skipped.push(g + ".json: " + e.message); }
     }
     if (!quick) {
-      const quizzes = [];
-      for (const it of (await T.remote.list("greek-concepts")).filter(x => /\.quizpack$/i.test(x.name))) {
-        const p = parse(await T.remote.get("greek-concepts/" + it.name));
-        if (p && (p.Questions || p.questions)) quizzes.push(normQuiz(p));
-      }
-      quizzes.sort((a, b) => lessonKeyCompare(a.Lesson, b.Lesson));
-      T.greek.quizzes = quizzes; await DB.put("kv", "greek-quizzes", quizzes);
+      try {
+        const quizzes = [];
+        for (const it of (await T.remote.list("greek-concepts")).filter(x => /\.quizpack$/i.test(x.name))) {
+          try { const p = parse(await T.remote.get("greek-concepts/" + it.name)); if (p && (p.Questions || p.questions)) quizzes.push(normQuiz(p)); }
+          catch (e) { skipped.push(it.name + ": " + e.message); }
+        }
+        quizzes.sort((a, b) => lessonKeyCompare(a.Lesson, b.Lesson));
+        T.greek.quizzes = quizzes; await DB.put("kv", "greek-quizzes", quizzes);
+      } catch (e) { skipped.push("Greek quizzes: " + e.message); }
     }
-    await DB.put("kv", "etags", etags);
+    await saveTags();
     T.status.lastSync = new Date(); T.status.offline = false;
     T.status.text = "Up to date, " + T.status.lastSync.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (skipped.length) { T.status.text += ` (skipped ${skipped.length}: ${skipped[0]}${skipped.length > 1 ? "…" : ""})`; console.warn("Training sync skipped:", skipped); }
+    T.status.skipped = skipped;
+    // Pictures and covers: in the background, a few at a time, so studying can start right away.
+    if (!quick && !mediaRun) mediaRun = downloadMedia(mediaTodo.concat(byName.covers ? ["training/covers"] : []), etags).finally(() => { mediaRun = null; });
   } catch (e) {
-    T.status.offline = !navigator.onLine || /Failed to fetch|NetworkError/i.test(e.message);
+    T.status.offline = !navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(e.message);
+    T.status.error = T.status.offline ? "" : e.message;
     T.status.text = T.status.offline ? "Offline: your progress is kept here and syncs when you're back online." : e.message;
   } finally {
-    T.status.busy = false; T.status.pending = T.mine.some(e => e._pending);
+    T.status.busy = false; T.status.step = ""; T.status.pending = T.mine.some(e => e._pending);
     changed();
   }
+}
+async function downloadMedia(folders, etags) {
+  const todo = [];
+  for (const folder of folders) {
+    try {
+      for (const it of await T.remote.list(folder)) {
+        if (it.folder) continue;
+        const path = folder + "/" + it.name;
+        if (!READ_OK(path)) continue;
+        if (etags[path] === it.etag && await DB.get("files", path)) continue;
+        todo.push({ path, etag: it.etag });
+      }
+    } catch (e) { console.warn("Pictures:", folder, e.message); }
+  }
+  let done = 0;
+  const worker = async () => {
+    while (todo.length) {
+      const it = todo.shift();
+      try { const blob = await T.remote.get(it.path, true); if (blob) { await DB.put("files", it.path, blob); etags[it.path] = it.etag; } }
+      catch (e) { console.warn("Picture skipped:", it.path, e.message); }
+      done++;
+      T.status.media = todo.length ? `Pictures: ${done} downloaded, ${todo.length} to go` : "";
+      if (done % 10 === 0) { await DB.put("kv", "etags", etags); changed(); }
+    }
+  };
+  if (!todo.length) return;
+  T.status.media = `Pictures: ${todo.length} to download`; changed();
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  T.status.media = "";
+  await DB.put("kv", "etags", etags);
+  changed();
 }
 
 // ---------- Your progress (this device's own log) ----------
