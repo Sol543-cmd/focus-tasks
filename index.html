@@ -21,7 +21,7 @@
 <meta name="apple-mobile-web-app-title" content="Tasks">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="training.css?v=11" integrity="sha384-xXjlS5CjZ0XJEqMtTgBTMquAjNSZg3bxvLuqg42CSW5dD6cL5m1T5BsfN4p+JtR9">
+<link rel="stylesheet" href="training.css?v=12" integrity="sha384-8CnM9bEk/PmfH9wHukqEx/Z1tcfkyjU9r2elN0UzXx2PduTKjZVIm64mxl2ODtb+">
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Focus Tasks</title>
@@ -80,7 +80,7 @@
   .dots { display: flex; justify-content: center; gap: 8px; margin: -4px 0 10px; }
   .dots span { width: 7px; height: 7px; border-radius: 4px; background: var(--line); cursor: pointer; }
   .dots span.on { background: var(--accent); }
-  .exportList { max-height: 50vh; overflow-y: auto; }
+  .exportList { max-height: calc(50vh / var(--app-scale, 1)); overflow-y: auto; }
   .exportRow { display: block; width: 100%; text-align: left; margin-top: 6px; }
   /* Printing: only the printout shows, in ink-friendly colors (whatever the theme) */
   #printArea { display: none; }
@@ -115,7 +115,7 @@
   .addbar form { max-width: 680px; margin: 0 auto; display: flex; gap: 8px; }
   .addbar small { display: block; max-width: 680px; margin: 4px auto 0; color: var(--muted); font-size: 11px; }
   .sheet { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; justify-content: center; z-index: 10; }
-  .sheet .card { background: var(--panel); width: 100%; max-width: 680px; max-height: 92vh; overflow-y: auto;
+  .sheet .card { background: var(--panel); width: 100%; max-width: 680px; max-height: calc(92vh / var(--app-scale, 1)); overflow-y: auto;
                  border-radius: 16px 16px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
   .card label { display: block; color: var(--muted); font-size: 13px; margin: 12px 0 4px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -127,6 +127,10 @@
   .steps li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
   .steps li span { flex: 1; }
   .sheetbar { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 8px; }
+  .reconnect { display: flex; align-items: center; gap: 10px; margin: 4px 16px 6px; padding: 10px 12px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--accent); font-size: 14px; color: var(--text); }
+  .reconnect span { flex: 1; min-width: 0; }
+  .reconnect.hidden { display: none; }
   .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: 96px; background: var(--text); color: var(--bg);
            padding: 9px 16px; border-radius: 20px; font-size: 14px; z-index: 20; }
 
@@ -218,6 +222,7 @@
     <button class="icon" id="filterBtn" aria-label="Filters"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg><span class="fdot hidden" id="filterDot"></span></button>
     <button class="icon hidden" id="menuBtn" aria-label="Menu"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/></svg></button>
   </header>
+  <div class="reconnect hidden" id="reconnect" role="status"><span>OneDrive wants a quick sign-in check. Your changes are safe on this phone.</span><button type="button" id="reconnectBtn" class="primary">Reconnect</button></div>
   <div class="dots" id="pageDots" aria-label="Pages: Personal and Tasks"><span class="on" role="button" aria-label="Personal"></span><span role="button" aria-label="Tasks"></span></div>
 
   <section id="boot" class="center">
@@ -257,12 +262,13 @@
 
 <div class="sheet hidden" id="sheet"><div class="card" id="sheetCard"></div></div>
 
-<script src="msal-browser.min.js?v=11" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
-<script src="config.js?v=11"></script>
-<script src="logic.js?v=11" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
-<script src="app.js?v=11" integrity="sha384-eUdEUkCBRTAKP13p6wliW5gFeaBroJKXQZgMYKdENamEVom24Q0KifzLKEITOAau"></script>
-<script src="training-data.js?v=11" integrity="sha384-w9a5yxrFLMP0fsxqOHTjC877w+PEjs40zT0eSsxWR/uqCttYOrwhMHVnZ88NrHSm"></script>
-<script src="training-reader.js?v=11" integrity="sha384-G85r2ifB75CYfEXmo9+JV3HMXdjeRYvzQ1Z5mkpz0Fdv20Sk1nspuZSAl9symByF"></script>
-<script src="training-ui.js?v=11" integrity="sha384-9zXGvVkGm29ZOksC0ResBcQbPbuqzs2MUt1Px1UeNNcVdiBodBZZsG0xIw11WPp7"></script>
+<script src="boot.js?v=12" integrity="sha384-lKqWD00DrGGcFGryduOO4BTStOmI86gnEVyi243+ko2P7QAowV46UTIUxjsHvYde"></script>
+<script src="msal-browser.min.js?v=12" integrity="sha384-OJTwghM0Gh3Zc+gmd6l0lz1pFw9KuHHq0mSEZgmQEKgMnuSWWDb3bU9KzuD7w2hU"></script>
+<script src="config.js?v=12"></script>
+<script src="logic.js?v=12" integrity="sha384-gbWf4y28NKLsc6JWbc0e16W5wHOidj3v+meS+gL08JZHjEmqksM3VnCr+oU8cPXK"></script>
+<script src="app.js?v=12" integrity="sha384-U/fsglx1mAyIgwVfwfoWfET88OfhbBE2FZZJZCaRaZGaBfDvvUQycDH459IPCn3U"></script>
+<script src="training-data.js?v=12" integrity="sha384-Rrg/THzBE2+GSuwJcbK8vzfsu4EuikZv8URKJfCuDNYv3UhcxRycWyskZwekt3b/"></script>
+<script src="training-reader.js?v=12" integrity="sha384-G85r2ifB75CYfEXmo9+JV3HMXdjeRYvzQ1Z5mkpz0Fdv20Sk1nspuZSAl9symByF"></script>
+<script src="training-ui.js?v=12" integrity="sha384-GleW4q7Eh1IY2TtgIcF5WtH83zY2j6SB5hOg1lnk2vmvrf2ng+3uc34nXKfwcWfw"></script>
 </body>
 </html>

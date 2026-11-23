@@ -144,7 +144,9 @@ const changed = () => listeners.forEach(fn => { try { fn(); } catch (e) { consol
 const parse = (text, fallback) => { try { return text == null ? fallback : JSON.parse(text.replace(/^﻿/, "")); } catch { return undefined; } };
 
 /** Loads the copy on this device (works offline), then syncs with OneDrive. */
+window.addEventListener("focus-signed-in", () => { if (T._started) T.sync(); });
 T.start = async () => {
+  T._started = true;
   const kv = async k => DB.get("kv", k);
   T.config = (await kv("config")) || T.config;
   T.mine = (await kv("mine")) || [];
@@ -177,8 +179,12 @@ let syncing = null, mediaRun = null;
 T.sync = (opts = {}) => syncing || (syncing = runSync(opts).finally(() => { syncing = null; }));
 const step = text => { T.status.step = text; changed(); };
 async function runSync({ quick = false } = {}) {
-  if (typeof account !== "undefined" && !account && !window.TRAINING_REMOTE) { T.status.error = "Sign in first (on the Tasks page)."; changed(); return; }
-  T.status.busy = true; T.status.error = ""; T.status.text = "Syncing…"; step("Checking OneDrive…");
+  if (typeof account !== "undefined" && !account && !window.TRAINING_REMOTE) {
+    // Still signing in quietly in the background: sync as soon as that's done (see "focus-signed-in").
+    if (localStorage.getItem("focus-known") !== "1") { T.status.error = "Sign in first (on the Tasks page)."; changed(); }
+    return;
+  }
+  T.status.busy = true; T.status.error = ""; T.status.signin = false; T.status.text = "Syncing…"; step("Checking OneDrive…");
   const skipped = [];
   try {
     try { await pushMine(); } catch (e) { skipped.push("saving your progress: " + e.message); }
@@ -298,7 +304,8 @@ async function runSync({ quick = false } = {}) {
     // Pictures and covers: in the background, a few at a time, so studying can start right away.
     if (!quick && !mediaRun) mediaRun = downloadMedia(mediaTodo.concat(byName.covers ? ["training/covers"] : []), etags).finally(() => { mediaRun = null; });
   } catch (e) {
-    T.status.offline = !navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(e.message);
+    T.status.signin = e.code === "signin";
+    T.status.offline = !T.status.signin && (!navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test(e.message));
     T.status.error = T.status.offline ? "" : e.message;
     T.status.text = T.status.offline ? "Offline: your progress is kept here and syncs when you're back online." : e.message;
   } finally {

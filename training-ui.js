@@ -89,7 +89,7 @@
       dash.innerHTML = st.busy
         ? `<div class="tr-empty"><p><b>Getting your training…</b></p><p class="tr-stepline">${E(st.step || "Connecting to OneDrive…")}</p><p>The first time, your books and lessons download from OneDrive. After that they're kept here for offline use.</p></div>`
         : st.error || st.offline
-          ? `<div class="tr-empty"><p><b>${st.offline ? "You're offline" : "Couldn't get your training"}</b></p><p class="tr-errline">${E(st.offline ? "Connect to the internet and try again." : st.error)}</p><button class="tr-btn primary" data-act="sync">Try again</button></div>`
+          ? `<div class="tr-empty"><p><b>${st.offline ? "You're offline" : st.signin ? "OneDrive wants a quick sign-in check" : "Couldn't get your training"}</b></p><p class="tr-errline">${E(st.offline ? "Connect to the internet and try again." : st.error)}</p><button class="tr-btn primary" data-act="${st.signin ? "reconnect" : "sync"}">${st.signin ? "Reconnect" : "Try again"}</button></div>`
           : st.lastSync
             ? `<div class="tr-empty"><p><b>No books yet</b></p><p>Add a book on your computer (Training, Library). It shows up here after it syncs.</p><button class="tr-btn" data-act="sync">Sync now</button></div>`
             : `<div class="tr-empty"><p><b>Getting your training…</b></p><p class="tr-stepline">Starting…</p><button class="tr-btn" data-act="sync">Sync now</button></div>`;
@@ -139,7 +139,7 @@
     parts.push(`<h2 class="tr-h">This week</h2><div class="tr-stats"><div><b>${w.lessons}</b><small>${w.lessons === 1 ? "lesson" : "lessons"} done · ${w.planned} planned</small></div><div><b>${w.answers}</b><small>answers</small></div><div><b>${w.answers ? Math.round((100 * w.right) / w.answers) : 0}%</b><small>right and sure</small></div></div>`);
     const st = T.status;
     parts.push(`<p class="tr-foot">${E(st.busy ? st.step || "Syncing…" : st.text || "")}${st.media ? `<br>${E(st.media)}` : ""}${st.error ? `<br><button class="tr-link" data-act="sync">Try again</button>` : ""}</p>`);
-    if (st.error) parts.unshift(`<div class="tr-banner">${E(st.error)}</div>`);
+    if (st.error) parts.unshift(`<div class="tr-banner">${E(st.error)}${st.signin ? ` <button class="tr-btn primary" data-act="reconnect">Reconnect</button>` : ""}</div>`);
     dash.innerHTML = parts.join("");
     dash.querySelectorAll("[data-cover]").forEach(async el => { const c = T.course(el.dataset.cover); const url = c && await T.coverUrl(c); if (url) { el.textContent = ""; el.style.backgroundImage = `url("${url}")`; } });
     paintSync();
@@ -162,6 +162,7 @@
     if (!b || !root.contains(b) || b.closest(".trp, .trs")) return;
     const act = b.dataset.act, book = b.dataset.book;
     if (act === "sync") { T.sync(); paintDash(); }
+    else if (act === "reconnect") { if (typeof reconnect === "function") reconnect(); }
     else if (act === "lesson") { const lr = T.nextLesson(book); if (lr) runLesson(lr); else note("No lesson ready in this book yet."); }
     else if (act === "exam") runExam(book);
     else if (act === "books") runBooksPractice();

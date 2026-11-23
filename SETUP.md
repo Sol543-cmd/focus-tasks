@@ -8,6 +8,18 @@ meetings and plan, and three themes (under ⋯).
 
 (Hardened version details below.)
 
+## New: opens instantly, syncs in the background, and a Size setting
+
+- **Opens instantly.** The app shows your last copy straight away, then syncs with OneDrive behind it.
+- **Changes save instantly.** Adding, finishing or editing a task shows at once and is kept on the phone,
+  then sent to OneDrive in the background (on the newest copy, so your computers' changes aren't lost).
+  Offline? Changes wait on the phone and go when you're back online, even if you close the app.
+- **No surprise trips to Microsoft.** About once a day Microsoft wants a quick sign-in check (its rule for
+  web apps). Instead of jumping away, the app keeps working and shows a **Reconnect** button: one tap,
+  a moment on Microsoft's page, and you're back.
+- **Size** (⋯ menu, at the top): Small, Normal, Large, Larger, Largest. Scales text, buttons and spacing
+  everywhere, Training included.
+
 ## New: Training (the 📖 button at the top)
 
 Your Training from Focus, on your phone and Boox: today's lesson, Books practice, Flashcards, Timeline,

@@ -45,6 +45,9 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;
 
 async function start() {
   if (CLIENT_ID.startsWith("PASTE")) { setStatus("This page isn't set up yet: add your client ID (see SETUP.md).", true); return; }
+  // Signed in before: show your last copy right away, and sync behind it.
+  const known = localStorage.getItem("focus-known") === "1" && cacheGet(files()[0]) != null;
+  if (known) { showSignedIn(true); showState(); setStatus("Syncing…"); }
   client = new window.msal.PublicClientApplication({
     auth: { clientId: CLIENT_ID, authority: "https://login.microsoftonline.com/common", redirectUri: location.origin + location.pathname },
     // Remembered on this phone, so you stay signed in between visits. Sign out with ⎋ to forget it.
@@ -52,8 +55,10 @@ async function start() {
   });
   try { const r = await client.handleRedirectPromise(); account = (r && r.account) || client.getAllAccounts()[0]; }
   catch (e) { setStatus("Sign-in problem: " + e.message, true); }
+  if (!account && known) account = client.getAllAccounts()[0];
+  try { if (account) localStorage.setItem("focus-known", "1"); else localStorage.removeItem("focus-known"); } catch { /* private mode */ }
   showSignedIn(!!account);
-  if (account) await reload();
+  if (account) { window.dispatchEvent(new Event("focus-signed-in")); reload(); }
 }
 function showSignedIn(on) {
   $("boot").classList.add("hidden"); // the app has started
@@ -62,15 +67,107 @@ function showSignedIn(on) {
   $("addbar").classList.toggle("hidden", !on);
   ["menuBtn", "projectsBtn", "calBtn"].forEach(id => $(id).classList.toggle("hidden", !on));
 }
+let needsSignIn = false;
 async function token() {
-  try { return (await client.acquireTokenSilent({ scopes: SCOPES, account })).accessToken; }
-  catch {
-    // Every so often Microsoft wants a quick check: this passes through its page and straight back,
-    // normally without typing anything.
-    setStatus("Refreshing your sign-in...");
-    await client.acquireTokenRedirect({ scopes: SCOPES, account, loginHint: account && account.username });
-    throw new Error("Refreshing your sign-in...");
+  try {
+    const t = (await client.acquireTokenSilent({ scopes: SCOPES, account })).accessToken;
+    if (needsSignIn) { needsSignIn = false; showReconnect(false); }
+    return t;
+  } catch (e) {
+    const code = String((e && (e.errorCode || e.name)) || "") + " " + String((e && e.message) || "");
+    if (/interaction|login_required|consent_required|no_tokens|no_account|monitor_window_timeout|invalid_grant|block_token/i.test(code)) {
+      // Microsoft wants a quick check. Don't jump away: keep showing your copy and offer a one-tap Reconnect.
+      needsSignIn = true; showReconnect(true);
+      const err = new Error("Tap Reconnect to sync with OneDrive. Your changes are kept on this phone."); err.code = "signin"; throw err;
+    }
+    throw e;
   }
+}
+function showReconnect(on) { const r = $("reconnect"); if (r) r.classList.toggle("hidden", !on); }
+function reconnect() {
+  setStatus("Reconnecting…");
+  client.acquireTokenRedirect({ scopes: SCOPES, account, loginHint: account && account.username });
+}
+
+// ---------- Kept on this phone: opens instantly, saves instantly, syncs in the background ----------
+
+const cacheKey = name => "focus-file:" + name;
+function cacheGet(name) { try { const t = localStorage.getItem(cacheKey(name)); return t == null ? null : JSON.parse(t); } catch { return null; } }
+function cachePut(name, data) { try { localStorage.setItem(cacheKey(name), JSON.stringify(data)); } catch { /* full or private: still works online */ } }
+const arr = x => (Array.isArray(x) ? x : []);
+/** Changes made here that haven't reached OneDrive yet (kept even if you close the app). */
+let pending = (() => { try { return JSON.parse(localStorage.getItem("focus-pending") || "[]"); } catch { return []; } })();
+function savePending() { try { localStorage.setItem("focus-pending", JSON.stringify(pending)); } catch { /* private mode */ } }
+function diffList(before, after) {
+  const old = new Map(before.map(x => [x.Id, JSON.stringify(x)]));
+  const ids = new Set(after.map(x => x.Id));
+  return { up: after.filter(x => old.get(x.Id) !== JSON.stringify(x)), rm: before.filter(x => !ids.has(x.Id)).map(x => x.Id) };
+}
+function applyDiff(list, d) {
+  const rm = new Set(d.rm);
+  const out = list.filter(x => !rm.has(x.Id));
+  for (const x of d.up) { const i = out.findIndex(y => y.Id === x.Id); if (i >= 0) out[i] = x; else out.push(x); }
+  return out;
+}
+/** A page's lists: the last copy from OneDrive, with your waiting changes on top. */
+function localState(m) {
+  const [bf, rf, pf] = FILESETS[m];
+  const b0 = cacheGet(bf);
+  if (b0 == null) return null;
+  let b = arr(b0), r = arr(cacheGet(rf)), p = arr(cacheGet(pf));
+  for (const op of pending.filter(o => o.mode === m)) { b = applyDiff(b, op.bin); r = applyDiff(r, op.resolved); p = applyDiff(p, op.projects); }
+  return [b, r, p];
+}
+function showState() {
+  const st = localState(mode);
+  if (!st) return false;
+  [bin, resolved, projects] = st;
+  render();
+  return true;
+}
+let flushing = null, flushTimer = null;
+function scheduleFlush(ms = 300) { clearTimeout(flushTimer); flushTimer = setTimeout(() => flush().catch(syncError), ms); }
+/** Sends waiting changes, each applied to the newest copy of the files so edits from your computers aren't lost. */
+function flush() {
+  return flushing || (flushing = doFlush().finally(() => {
+    flushing = null;
+    if (pending.length && !needsSignIn) scheduleFlush(20000); // try again shortly (offline, or OneDrive busy)
+  }));
+}
+async function doFlush() {
+  if (!account || !pending.length) return;
+  for (const m of ["main", "personal"]) {
+    const ops = pending.filter(o => o.mode === m);
+    if (!ops.length) continue;
+    const [bf, rf, pf, xf] = FILESETS[m];
+    const [b, r, p, x] = await Promise.all([bf, rf, pf, xf].map(n => readFile(n)));
+    const lists = { bin: arr(b), resolved: arr(r), projects: arr(p) }, removed = arr(x);
+    const gone = new Set(removed.map(e => e.Id)), newGone = [], touched = {};
+    for (const op of ops) {
+      for (const k of ["bin", "resolved", "projects"]) {
+        const d = op[k];
+        if (!d.up.length && !d.rm.length) continue;
+        touched[k] = true;
+        // A task deleted or finished on a computer stays gone, even if it was edited here.
+        lists[k] = applyDiff(lists[k], { up: k === "bin" ? d.up.filter(t => !gone.has(t.Id)) : d.up, rm: d.rm });
+        if (k === "bin") for (const id of d.rm) if (!gone.has(id)) { gone.add(id); newGone.push({ Id: id, At: op.at }); }
+      }
+    }
+    // Tasks finished or deleted here go in the removal record, so your computers know they're really gone.
+    if (newGone.length) await writeFile(xf, removed.concat(newGone));
+    if (touched.bin) await writeFile(bf, lists.bin);
+    if (touched.resolved) await writeFile(rf, lists.resolved);
+    if (touched.projects) await writeFile(pf, lists.projects);
+    pending = pending.filter(o => !ops.includes(o));
+    savePending();
+    if (m === mode) showState();
+  }
+  setStatus("Synced, " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+}
+function syncError(e) {
+  if (e && e.code === "signin") setStatus(e.message);
+  else if (!navigator.onLine || /Failed to fetch|NetworkError|Load failed/i.test((e && e.message) || "")) setStatus(pending.length ? `Offline: ${pending.length} change${pending.length === 1 ? "" : "s"} saved here, syncing when you're back online.` : "Offline: showing your last copy.");
+  else setStatus(e.message, true);
 }
 
 // ---------- The Focus files in OneDrive ----------
@@ -80,8 +177,11 @@ async function readFile(name) {
   if (res.status === 404) return [];
   if (!res.ok) throw new Error(`Couldn't read ${name} (${res.status})`);
   const text = await res.text();
-  try { const data = JSON.parse(text); return Array.isArray(data) ? data : (data && typeof data === "object" ? data : []); }
-  catch { throw new Error(`${name} is busy syncing; try again in a moment.`); }
+  let data;
+  try { data = JSON.parse(text.replace(/^\uFEFF/, "")); } catch { throw new Error(`${name} is busy syncing; trying again shortly.`); }
+  data = Array.isArray(data) ? data : (data && typeof data === "object" ? data : []);
+  cachePut(name, data);
+  return data;
 }
 async function writeFile(name, data) {
   const res = await fetch(fileUrl(name, true), {
@@ -89,52 +189,43 @@ async function writeFile(name, data) {
     body: JSON.stringify(data, null, 2)
   });
   if (!res.ok) throw new Error(`Couldn't save ${name} (${res.status})`);
+  cachePut(name, data);
 }
 async function reload() {
+  showState();
+  if (!account) return;
   try {
-    setStatus("Loading...");
+    setStatus("Syncing…");
+    if (pending.length) await flush();
     const wanted = mode;
-    const loaded = await Promise.all(files().slice(0, 3).map(readFile));
+    await Promise.all(files().slice(0, 3).map(readFile));
     if (wanted !== mode) return; // you switched pages while it loaded
-    [bin, resolved, projects] = loaded;
-    render();
+    showState();
     setStatus("Up to date, " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
-  } catch (e) { setStatus(e.message, true); }
+  } catch (e) { syncError(e); }
 }
-/** Every change is made on the newest copy of the files, so edits from your computers aren't lost. */
-async function change(fn, message) {
-  if (busy) { toast("One moment..."); return; }
-  busy = true;
-  try {
-    setStatus("Saving...");
-    const [binFile, doneFile, projectFile] = files();
-    const [b, r, p] = await Promise.all([readFile(binFile), readFile(doneFile), readFile(projectFile)]);
-    const before = new Map(b.map(t => [t.Id, JSON.stringify(t)]));
-    const touched = fn(b, r, p) || {};
-    // Every task added or changed here gets the time of the change (in the same form as your computers use),
-    // so your computers always know it's newer than any old copy, and never mistake it for one.
-    const stamp = new Date().toISOString();
-    for (const t of b) {
-      if (!t.CreatedAt) t.CreatedAt = iso(new Date());
-      if (before.get(t.Id) !== JSON.stringify(t)) t.Modified = stamp;
-    }
-    // Tasks finished or deleted here go in the removal record, so your computers know they're really gone.
-    const gone = [...before.keys()].filter(id => !b.some(t => t.Id === id));
-    if (gone.length) {
-      const removedFile = files()[3];
-      const record = await readFile(removedFile);
-      for (const id of gone) if (!record.some(x => x.Id === id)) record.push({ Id: id, At: stamp });
-      await writeFile(removedFile, record);
-    }
-    await writeFile(binFile, b);
-    if (touched.resolved) await writeFile(doneFile, r);
-    if (touched.projects) await writeFile(projectFile, p);
-    bin = b; resolved = r; projects = p;
-    render();
-    setStatus("Saved. Your computers pick it up within a minute or so.");
-    if (message) toast(message);
-  } catch (e) { setStatus(e.message, true); }
-  finally { busy = false; }
+/** A change shows at once and is kept on this phone; it reaches OneDrive in the background,
+ *  applied to the newest copy of the files so edits from your computers aren't lost. */
+function change(fn, message) {
+  const clone = x => JSON.parse(JSON.stringify(arr(x)));
+  const b = clone(bin), r = clone(resolved), p = clone(projects);
+  const before = new Map(b.map(t => [t.Id, JSON.stringify(t)]));
+  fn(b, r, p);
+  // Every task added or changed here gets the time of the change (in the same form as your computers use),
+  // so your computers always know it's newer than any old copy, and never mistake it for one.
+  const stamp = new Date().toISOString();
+  for (const t of b) {
+    if (!t.CreatedAt) t.CreatedAt = iso(new Date());
+    if (before.get(t.Id) !== JSON.stringify(t)) t.Modified = stamp;
+  }
+  const op = { mode, at: stamp, bin: diffList(arr(bin), b), resolved: diffList(arr(resolved), r), projects: diffList(arr(projects), p) };
+  if (!["bin", "resolved", "projects"].some(k => op[k].up.length || op[k].rm.length)) return;
+  pending.push(op); savePending();
+  bin = b; resolved = r; projects = p;
+  render();
+  if (message) toast(message);
+  setStatus(account ? "Saved · syncing…" : "Saved on this phone.");
+  scheduleFlush(250);
 }
 
 // ---------- Lists ----------
@@ -175,7 +266,7 @@ function render() {
   const shown = sortTasks(view === "today" ? tasks.filter(isToday) : view === "undated" ? tasks.filter(isUndated) : tasks, d);
   if (!shown.length) {
     list.innerHTML = `<p class="empty">${view === "today"
-      ? "Nothing set for today. Add a task below, or tap Today on a task in All."
+      ? "Nothing set for today. Add a task below, or open one in All and choose Do it: Today."
       : view === "undated" ? "Every task has a date. Nice."
       : "No tasks here."}</p>`;
     return;
@@ -323,16 +414,17 @@ function openEditor(id) {
   const seg = (name, options, value) => `<div class="seg" data-seg="${name}">` +
     options.map(([v, l]) => `<button type="button" data-v="${esc(v)}" aria-pressed="${String(v) === String(value)}">${l}</button>`).join("") + "</div>";
   const steps = JSON.parse(JSON.stringify(t.Subtasks || []));
-  // Picked for a day other than today: kept, and shown under More options.
-  const otherDay = planned && planned !== tdy ? parseYmd(planned) : null;
+  const planChoice = planned === "" ? "" : planned === tdy || planned === tmr ? planned : "other";
   const card = $("sheetCard");
   card.innerHTML = `
     <label>Task</label><textarea id="eText" rows="2">${esc(t.Text)}</textarea>
-    <label>Due date</label>${dateField("eDue", due, "Like friday or 10/14")}
-    <div class="seg duequick" style="margin-top:6px"><button type="button" data-due="0">Today</button><button type="button" data-due="1">Tomorrow</button><button type="button" data-due="">None</button></div>
-    <label class="switch" style="margin-top:12px"><input type="checkbox" id="eDoToday" ${planned === tdy ? "checked" : ""}> Do this today</label>
+    <label>Do it</label>${seg("plan", [["", "Any time"], [tdy, "Today"], [tmr, "Tomorrow"], ["other", "Pick a day"]], planChoice)}
+    <input id="ePlanDay" type="date" class="${planChoice === "other" ? "" : "hidden"}" value="${esc(planChoice === "other" ? planned : "")}" style="margin-top:6px">
     <label>Priority</label>${seg("prio", [["High", "High"], ["Normal", "Normal"], ["Low", "Low"]], t.Priority || "Normal")}
-    <label>Reminder</label><input id="eRemind" type="datetime-local" value="${remind ? iso(remind).slice(0, 16) : ""}">
+    <div class="row">
+      <div><label>Due date</label><input id="eDue" type="date" value="${due ? ymd(due) : ""}"></div>
+      <div><label>Reminder</label><input id="eRemind" type="datetime-local" value="${remind ? iso(remind).slice(0, 16) : ""}"></div>
+    </div>
     <label>Repeats</label><input id="eRepeat" value="${esc(t.Repeat || "")}" placeholder="every friday, weekdays, every month on the 15th">
     <div class="hint" id="eRepeatHint"></div>
     <label>Project</label><select id="eProject"><option value="">None</option>${projects.map(p =>
@@ -345,34 +437,25 @@ function openEditor(id) {
     <label>Estimate (focus sessions)</label>${seg("est", [[0, "Not sure"], [0.34, "Quick"], [1, "1"], [2, "2"], [3, "3"], [4, "4"]], t.Estimate || 0)}
     <label>Status</label>${seg("status", [["", "To do"], ["doing", "Doing"], ["waiting", "Waiting"]], t.Status || "")}
     <input id="eWaiting" class="${t.Status === "waiting" ? "" : "hidden"}" value="${esc(t.WaitingOn || "")}" placeholder="Waiting on whom?" style="margin-top:6px">
-    <details class="moreopts" ${otherDay || (snooze && snooze > d) ? "open" : ""}><summary>More options</summary>
-      <label>Pick for another day</label>${dateField("ePlanDay", otherDay, "Like monday or 11/3")}
-      <div class="hint">It shows on that day's Today list.</div>
-      <label>Snooze until (hidden from lists until then)</label>${dateField("eSnooze", snooze && snooze > d ? snooze : null, "Like next week")}
-    </details>
+    <label>Snooze until (hidden from lists until then)</label><input id="eSnooze" type="date" value="${snooze && snooze > d ? ymd(snooze) : ""}">
     <div class="sheetbar">
       <button type="button" id="eDelete">Delete</button>
       <span><button type="button" id="eCancel">Cancel</button> <button type="button" class="primary" id="eSave">Save</button></span>
     </div>`;
   openSheet();
-  ["eDue", "ePlanDay", "eSnooze"].forEach(wireDateField);
-  card.querySelectorAll(".duequick button").forEach(b => b.onclick = () => {
-    setDateField("eDue", b.dataset.due === "" ? null : addDays(d, +b.dataset.due));
-    repeatHint();
-  });
 
-  card.querySelectorAll(".seg:not(.duequick)").forEach(s => s.querySelectorAll("button").forEach(b => b.onclick = () => {
+  card.querySelectorAll(".seg").forEach(s => s.querySelectorAll("button").forEach(b => b.onclick = () => {
     s.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", "false"));
     b.setAttribute("aria-pressed", "true");
+    if (s.dataset.seg === "plan") $("ePlanDay").classList.toggle("hidden", b.dataset.v !== "other");
     if (s.dataset.seg === "status") $("eWaiting").classList.toggle("hidden", b.dataset.v !== "waiting");
   }));
   const segValue = name => { const b = card.querySelector(`[data-seg="${name}"] [aria-pressed="true"]`); return b ? b.dataset.v : ""; };
   const repeatHint = () => {
-    const txt = $("eRepeat").value.trim(), rule = parseRepeat(txt, readDateField("eDue").date || d);
+    const txt = $("eRepeat").value.trim(), rule = parseRepeat(txt, $("eDue").value ? parseYmd($("eDue").value) : d);
     $("eRepeatHint").textContent = !txt ? "Doesn't repeat" : rule ? describeRepeat(rule) : "Not understood yet";
   };
   $("eRepeat").oninput = repeatHint; repeatHint();
-  $("eDue").addEventListener("change", repeatHint);
   const drawSteps = () => {
     $("eSteps").innerHTML = "";
     steps.forEach((s, i) => {
@@ -418,21 +501,18 @@ function openEditor(id) {
     const text = $("eText").value.trim(); if (!text) { toast("The task needs some text"); return; }
     const repeat = $("eRepeat").value.trim();
     if (repeat && !parseRepeat(repeat, d)) { toast("Couldn't read the repeat"); return; }
-    const dueF = readDateField("eDue"), dayF = readDateField("ePlanDay"), snoozeF = readDateField("eSnooze");
-    if (!dueF.ok || !dayF.ok || !snoozeF.ok) { toast("Couldn't read a date. Try friday, 10/14 or tap the calendar."); return; }
-    // Do this today wins; otherwise the day under More options (if any). Unticking today clears it.
-    const plan = $("eDoToday").checked ? tdy : dayF.date && ymd(dayF.date) !== tdy ? ymd(dayF.date) : "";
+    let plan = segValue("plan"); if (plan === "other") plan = $("ePlanDay").value || "";
     const status = segValue("status");
     const edits = {
       Text: text, PlannedFor: plan, Priority: segValue("prio") || "Normal",
-      Due: dueF.date ? iso(dueF.date) : null,
+      Due: $("eDue").value ? iso(parseYmd($("eDue").value)) : null,
       RemindAt: $("eRemind").value ? $("eRemind").value + ":00" : null,
       Repeat: repeat, Project: $("eProject").value === "__new" ? "" : $("eProject").value,
       Section: $("eSection").disabled ? "" : $("eSection").value,
       Tags: $("eTags").value.split(",").map(x => x.trim().replace(/^#/, "")).filter(Boolean),
       Subtasks: steps, Notes: $("eNotes").value, Estimate: +segValue("est") || 0,
       Status: status, WaitingOn: status === "waiting" ? $("eWaiting").value.trim() : "",
-      SnoozedUntil: snoozeF.date ? iso(snoozeF.date) : null
+      SnoozedUntil: $("eSnooze").value ? iso(parseYmd($("eSnooze").value)) : null
     };
     if (repeat && !edits.Due) edits.Due = iso(nextDate(parseRepeat(repeat, d), addDays(d, -1)));
     if (status === "waiting" && t.Status !== "waiting") edits.WaitingSince = iso(new Date());
@@ -446,86 +526,6 @@ function openEditor(id) {
     }, "Saved");
   };
 }
-
-// ---------- Date fields: type a day, or tap for a small calendar ----------
-
-const FIELD_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** How a date shows in a field ("Oct 30, 2026"), in a form the field reads back exactly. */
-function fmtField(date) { return date ? `${FIELD_MONTHS[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}` : ""; }
-
-/** A date field: a text box (typing "friday" or "10/14" works) that opens a small calendar when tapped. */
-function dateField(id, date, placeholder) {
-  return `<div class="datefield"><input id="${id}" value="${esc(fmtField(date))}" placeholder="${esc(placeholder || "")}" autocomplete="off" enterkeyhint="done">` +
-         `<div class="dpop hidden" id="${id}Pop"></div></div>`;
-}
-
-/** What a date field holds: { ok, date }. Empty is fine (date null); text it can't read is not ok. */
-function readDateField(id) {
-  const text = ($(id).value || "").trim();
-  if (!text) return { ok: true, date: null };
-  const exact = /^([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/i.exec(text);
-  if (exact) {
-    const m = FIELD_MONTHS.findIndex(x => x.toLowerCase() === exact[1].toLowerCase());
-    if (m >= 0) return { ok: true, date: new Date(+exact[3], m, +exact[2]) };
-  }
-  if (parseYmd(text)) return { ok: true, date: parseYmd(text) };
-  const w = words(text), hit = tryDate(w, 0, today(), false);
-  return hit && hit.used === w.length ? { ok: true, date: startOfDay(hit.date) } : { ok: false, date: null };
-}
-
-function setDateField(id, date) {
-  $(id).value = fmtField(date);
-  $(id).dispatchEvent(new Event("change"));
-  closeDatePop(id);
-}
-
-function closeDatePop(id) { const pop = $(id + "Pop"); if (pop) pop.classList.add("hidden"); }
-
-/** Tapping the field opens the calendar (month arrows, today ringed, the chosen day filled); picking a day fills the field. */
-function wireDateField(id) {
-  const input = $(id), pop = $(id + "Pop");
-  if (!input || !pop) return;
-  let shown = null;
-  const draw = () => {
-    const chosen = readDateField(id).date, now = today();
-    const first = new Date(shown.getFullYear(), shown.getMonth(), 1), lead = (first.getDay() + 6) % 7; // weeks start on Monday
-    let cells = "";
-    for (let i = 0; i < lead; i++) cells += "<span></span>";
-    for (let day = 1; day <= daysInMonth(shown.getFullYear(), shown.getMonth()); day++) {
-      const date = new Date(shown.getFullYear(), shown.getMonth(), day);
-      const cls = [sameDay(date, now) ? "today" : "", sameDay(date, chosen) ? "chosen" : ""].join(" ").trim();
-      cells += `<button type="button" data-day="${day}" class="${cls}">${day}</button>`;
-    }
-    pop.innerHTML = `<div class="dphead"><button type="button" data-step="-1" aria-label="Previous month">‹</button>` +
-      `<b>${shown.toLocaleDateString([], { month: "long", year: "numeric" })}</b>` +
-      `<button type="button" data-step="1" aria-label="Next month">›</button></div>` +
-      `<div class="dpgrid">${["M", "T", "W", "T", "F", "S", "S"].map(x => `<i>${x}</i>`).join("")}${cells}</div>`;
-    pop.querySelectorAll("[data-step]").forEach(b => b.onclick = e => { e.stopPropagation(); shown = addMonths(shown, +b.dataset.step); draw(); });
-    pop.querySelectorAll("[data-day]").forEach(b => b.onclick = e => {
-      e.stopPropagation();
-      setDateField(id, new Date(shown.getFullYear(), shown.getMonth(), +b.dataset.day));
-    });
-  };
-  input.addEventListener("click", () => {
-    if (!pop.classList.contains("hidden")) return;
-    document.querySelectorAll(".dpop").forEach(p => p.classList.add("hidden"));
-    const chosen = readDateField(id).date || today();
-    shown = new Date(chosen.getFullYear(), chosen.getMonth(), 1);
-    draw();
-    pop.classList.remove("hidden");
-  });
-  input.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); closeDatePop(id); input.blur(); } });
-  // Typed text that reads as a date is tidied into the field's format when you leave it.
-  input.addEventListener("blur", () => { const r = readDateField(id); if (r.ok && r.date) input.value = fmtField(r.date); });
-  pop.addEventListener("mousedown", e => e.preventDefault()); // keep the typing box focused while using the calendar
-}
-
-// Tapping anywhere else closes an open calendar.
-document.addEventListener("click", e => {
-  if (e.target.closest && e.target.closest(".datefield")) return;
-  document.querySelectorAll(".dpop").forEach(p => p.classList.add("hidden"));
-});
 
 // ---------- Sheets ----------
 
@@ -713,17 +713,15 @@ function editEvent(ev, day) {
   const card = $("sheetCard");
   card.innerHTML = `<div class="evform"><label>${ev ? "Event" : "New event"}</label>
     <input id="eTitle" value="${esc(ev ? ev.title : "")}" placeholder="What" autocomplete="off">
-    <label>Day</label>${dateField("eDate", d, "Like friday or 10/14")}
+    <label>Day</label><input id="eDate" type="date" value="${ymd(d)}">
     <label class="switch" style="margin-top:12px"><input type="checkbox" id="eAll" ${ev && ev.allDay ? "checked" : ""}> All day</label>
     <div class="two" id="eTimes"><div><label>From</label><input id="eFrom" type="time" value="${from}"></div><div><label>To</label><input id="eTo" type="time" value="${to}"></div></div></div>
     <div class="sheetbar">${ev ? `<button type="button" id="eDelete">Delete</button>` : "<span></span>"}<span><button type="button" id="eCancel">Cancel</button> <button type="button" class="primary" id="eSave">Save</button></span></div>`;
   const times = () => $("eTimes").classList.toggle("hidden", $("eAll").checked);
   times(); $("eAll").onchange = times;
-  wireDateField("eDate");
   $("eCancel").onclick = () => openCalendar(day, "day");
   $("eSave").onclick = async () => {
-    const picked = readDateField("eDate");
-    const f = { title: $("eTitle").value.trim() || "(No title)", date: picked.ok && picked.date ? ymd(picked.date) : "", allDay: $("eAll").checked, from: $("eFrom").value, to: $("eTo").value };
+    const f = { title: $("eTitle").value.trim() || "(No title)", date: $("eDate").value, allDay: $("eAll").checked, from: $("eFrom").value, to: $("eTo").value };
     if (!f.date || (!f.allDay && f.to <= f.from)) { toast("Check the day and times."); return; }
     try {
       if (ev) await gFetch("/events/" + encodeURIComponent(ev.id), { method: "PATCH", body: JSON.stringify(gBody(f)) });
@@ -770,6 +768,16 @@ function applyTheme() {
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute("content", bg));
 }
 darkMode.addEventListener("change", applyTheme);
+/** Size: scales the whole app (text, buttons, spacing), like an app's display size setting. */
+const SCALES = [["0.9", "Small"], ["1", "Normal"], ["1.15", "Large"], ["1.3", "Larger"], ["1.5", "Largest"]];
+function currentScale() { const v = localStorage.getItem("focus-scale") || "1"; return SCALES.some(([k]) => k === v) ? v : "1"; }
+function applyScale() {
+  const v = parseFloat(currentScale());
+  document.documentElement.style.zoom = v === 1 ? "" : String(v);
+  document.documentElement.style.setProperty("--app-scale", String(v));
+  window.dispatchEvent(new Event("resize"));
+}
+applyScale();
 
 function openMenu() {
   const mainTheme = localStorage.getItem("focus-theme") || "classic";
@@ -777,7 +785,9 @@ function openMenu() {
   const pAccent = localStorage.getItem("focus-paccent") || "green";
   const seg = (items, current, kind) => `<div class="seg">${items.map(([k, n]) => `<button type="button" data-kind="${kind}" data-k="${k}" aria-pressed="${k === current}">${n}</button>`).join("")}</div>`;
   const card = $("sheetCard");
-  card.innerHTML = `<label>Theme</label>${seg(THEMES, mainTheme, "theme")}
+  card.innerHTML = `<label>Size</label>${seg(SCALES, currentScale(), "scale")}
+    <div class="hint">Makes text, buttons and spacing bigger or smaller everywhere, Training included.</div>
+    <label style="margin-top:14px">Theme</label>${seg(THEMES, mainTheme, "theme")}
     <label style="margin-top:14px">Personal page</label>${seg(THEMES, pTheme, "ptheme")}
     <div class="seg" style="margin-top:6px">${ACCENTS.map(([k, n, light]) => `<button type="button" data-kind="paccent" data-k="${k}" aria-pressed="${k === pAccent}"><span style="display:inline-block;width:10px;height:10px;border-radius:5px;background:${light};margin-right:5px"></span>${n}</button>`).join("")}</div>
     <div class="hint">Light or dark follows your phone. Swipe left for Tasks, right for Personal.</div>
@@ -791,13 +801,13 @@ function openMenu() {
     <button type="button" id="mRefresh" style="width:100%;margin-top:12px">Refresh now</button>
     <button type="button" id="mExport" style="width:100%;margin-top:12px">Export or print a list</button>
     <div class="sheetbar"><button type="button" id="mSignout">Sign out</button><button type="button" id="mClose">Close</button></div>`;
-  const keys = { theme: "focus-theme", ptheme: "focus-ptheme", paccent: "focus-paccent", openpersonal: "focus-open-personal", openmain: "focus-open-main" };
+  const keys = { scale: "focus-scale", theme: "focus-theme", ptheme: "focus-ptheme", paccent: "focus-paccent", openpersonal: "focus-open-personal", openmain: "focus-open-main" };
   const saveGoogle = () => { localStorage.setItem("focus-google-client", $("mGClient").value.trim()); localStorage.setItem("focus-google-calendar", $("mGCal").value.trim() || "primary"); };
   $("mGClient").onchange = saveGoogle; $("mGCal").onchange = saveGoogle;
   $("mGConnect").onclick = () => { saveGoogle(); gConnect(); };
   if ($("mGOff")) $("mGOff").onclick = () => { gDisconnect(); openMenu(); };
   $("mRefresh").onclick = () => { closeSheet(); reload(); };
-  card.querySelectorAll(".seg button").forEach(b => b.onclick = () => { localStorage.setItem(keys[b.dataset.kind], b.dataset.k); applyTheme(); openMenu(); });
+  card.querySelectorAll(".seg button").forEach(b => b.onclick = () => { localStorage.setItem(keys[b.dataset.kind], b.dataset.k); applyTheme(); applyScale(); openMenu(); });
   $("mSignout").onclick = () => { closeSheet(); client.logoutRedirect({ account }); };
   $("mExport").onclick = openExport;
   $("mClose").onclick = closeSheet;
@@ -844,7 +854,7 @@ function openAdd() {
 
 const pages = { main: { bin: [], resolved: [], projects: [], view: openingView("main") }, personal: { bin: [], resolved: [], projects: [], view: openingView("personal") } };
 function switchPage(to) {
-  if (to === mode || busy) return;
+  if (to === mode) return;
   pages[mode] = { bin, resolved, projects, view: view.startsWith("project:") ? "all" : view };
   mode = to;
   ({ bin, resolved, projects, view } = pages[mode]);
@@ -853,7 +863,7 @@ function switchPage(to) {
   document.querySelector("header h1").textContent = mode === "personal" ? "Personal" : "Tasks";
   document.querySelectorAll("#pageDots span").forEach((s, i) => s.classList.toggle("on", (i === 0) === (mode === "personal")));
   applyTheme();
-  render();
+  if (!showState()) render();
   reload();
 }
 (function swipes() {
@@ -989,7 +999,12 @@ $("searchBtn").onclick = () => {
 $("search").oninput = e => { search = e.target.value.trim(); render(); };
 $("tabs").querySelectorAll("button").forEach(b => b.onclick = () => { view = b.dataset.view; render(); });
 // Get the latest whenever you come back to the page (unless you're in the middle of editing).
-document.addEventListener("visibilitychange", () => { if (!document.hidden && account && $("sheet").classList.contains("hidden")) reload(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !account) return;
+  if ($("sheet").classList.contains("hidden")) reload(); else if (pending.length) flush().catch(() => {});
+});
+window.addEventListener("online", () => { if (account) { if (pending.length) flush().catch(syncError); else reload(); } });
+$("reconnectBtn").onclick = reconnect;
 
 // Lets your phone install the page as an app (and open it offline to the last copy).
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => { /* still works as a normal page */ });

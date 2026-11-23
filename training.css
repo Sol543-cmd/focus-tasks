@@ -111,7 +111,7 @@
 [hidden] { display: none !important; }
 body.tr-open > main, body.tr-open > .fab, body.tr-open > .ptr { display: none !important; }
 body.trp-open { overflow: hidden; }
-.tr { min-height: 100vh; background: var(--bg); color: var(--text); }
+.tr { min-height: calc(100vh / var(--app-scale, 1)); background: var(--bg); color: var(--text); }
 .tr-wrap { max-width: 720px; margin: 0 auto; padding: 10px max(14px, env(safe-area-inset-right, 0px)) 60px max(14px, env(safe-area-inset-left, 0px)); }
 .tr-head { display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 3; background: var(--bg); padding: 6px 0 8px; }
 .tr-head h1 { flex: 1; font-size: 22px; font-weight: 650; margin: 0; color: var(--tr-train); }
@@ -261,7 +261,7 @@ body.trp-open { overflow: hidden; }
 
 /* Sheets */
 .trs { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.35); display: flex; align-items: flex-end; justify-content: center; }
-.trs-card { background: var(--bg); width: 100%; max-width: 720px; max-height: 90vh; display: flex; flex-direction: column; border-radius: 18px 18px 0 0; }
+.trs-card { background: var(--bg); width: 100%; max-width: 720px; max-height: calc(90vh / var(--app-scale, 1)); display: flex; flex-direction: column; border-radius: 18px 18px 0 0; }
 .trs-head { display: flex; align-items: center; gap: 8px; padding: 10px 8px 6px 18px; border-bottom: 1px solid var(--line); }
 .trs-head b { flex: 1; font-size: 17px; }
 .trs-body { overflow-y: auto; padding: 8px max(16px, env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
@@ -311,7 +311,7 @@ body.trp-open { overflow: hidden; }
 .trr-pop { position: fixed; z-index: 5; background: var(--rsurface); border: 1px solid var(--rline); border-radius: 14px; padding: 6px; display: flex; gap: 6px; box-shadow: 0 8px 26px rgba(0,0,0,.22); }
 .trr-pop .sw { width: 40px; height: 40px; border-radius: 20px; border: 1px solid var(--rline); }
 .trr-pop .sw.hl-y { background: var(--rmark-y); } .trr-pop .sw.hl-g { background: var(--rmark-g); } .trr-pop .sw.hl-b { background: var(--rmark-b); }
-.trr-aa { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; max-height: 72vh; overflow-y: auto; background: var(--rsurface); color: var(--rink); border-top: 1px solid var(--rline); border-radius: 16px 16px 0 0; padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); font-family: system-ui, sans-serif; }
+.trr-aa { position: absolute; z-index: 3; left: 0; right: 0; bottom: 0; max-height: calc(72vh / var(--app-scale, 1)); overflow-y: auto; background: var(--rsurface); color: var(--rink); border-top: 1px solid var(--rline); border-radius: 16px 16px 0 0; padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); font-family: system-ui, sans-serif; }
 .trr-aa .trr-row { border-color: var(--rline); } .trr-aa .trr-row > span { color: var(--rmuted); }
 .trr-aa .tr-seg button { background: var(--rbg); color: var(--rink); border-color: var(--rline); }
 .trr-aa .tr-seg button[aria-pressed="true"] { border-color: var(--raccent); color: var(--raccent); background: var(--rbg); }
@@ -324,7 +324,7 @@ body.trp-open { overflow: hidden; }
 .tr-prose sup { font-size: .62em; line-height: 0; }
 .tr-prose aside.tr-side { background: var(--rsurface); border-left: 3px solid var(--raccent); border-radius: 6px; padding: .7em .9em .1em; margin: 0 0 1em; font-size: .92em; break-inside: avoid-column; }
 .tr-prose figure { margin: 0 0 1em; break-inside: avoid; text-align: center; }
-.tr-prose figure img { max-width: 100%; max-height: calc(var(--pageH, 70vh) * .8); height: auto; border-radius: 4px; }
+.tr-prose figure img { max-width: 100%; max-height: calc(var(--pageH, calc(70vh / var(--app-scale, 1))) * .8); height: auto; border-radius: 4px; }
 .tr-prose .tr-cap { font-size: .82em; color: var(--rmuted); text-align: center; }
 .tr-prose .tr-missing { font: 13px system-ui, sans-serif; color: var(--rmuted); border: 1px dashed var(--rline); border-radius: 8px; padding: 14px; }
 .tr-prose .tr-li { padding-left: calc(1.4em + var(--lvl) * 1.2em); text-indent: -1.4em; margin-bottom: .35em; }
