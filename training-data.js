@@ -922,3 +922,41 @@ T.greekRecord = (kind, c, right) => {
   }
   T.greekChanged(kind, c);
 };
+
+// ----- Practice next: which of Books practice, Book flashcards and Timeline needs you most right now -----
+// (The same rules as Focus on your computers; Greek isn't part of it.)
+T.practiceNeeds = () => {
+  const ids = (T.config.Courses || []).map(c => c.Id);
+  const today = T.startOfDay(new Date()), since = T.ymd(T.addDays(today, -14)), yesterday = T.ymd(T.addDays(today, -1));
+  const due = ids.flatMap(id => T.dueReview(id));
+  const cardIds = new Set(ids.flatMap(id => [...T.B(id).cardIds]));
+  const answers = T.events.filter(e => e.Kind === "answer" && (e.Day || "") >= since && ids.includes(T.courseOf(e)));
+  const right = e => e.Grade >= 1 || (e.Grade < 0 && e.Correct);
+  const recentDone = kinds => T.events.some(e => kinds.includes(e.Kind) && Date.now() - new Date(e.At).getTime() < 3600000);
+  const need = (area, title, noun, list, dueCount, doneKinds, secondsEach, roundSize) => {
+    const last = list.slice(-20);
+    const rate = last.length >= 3 ? last.filter(x => x.ok).length / last.length : 0.8;
+    const misses = last.filter(x => !x.ok).length;
+    const byKey = {};
+    for (const x of list) (byKey[x.key] ||= []).push(x);
+    const repeated = Object.values(byKey).filter(xs => xs.filter(x => !x.ok).length >= 2).length;
+    const fresh = Object.values(byKey).filter(xs => { const l = xs[xs.length - 1]; return !l.ok && l.day >= yesterday; }).length;
+    let score = dueCount > 0 || fresh > 0 || repeated > 0 ? (1 - rate) * 60 + Math.min(dueCount, 20) * 1.2 + repeated * 4 + fresh * 3 : 0;
+    if (recentDone(doneKinds)) score *= 0.4;
+    let why = misses > 0 && last.length >= 3 ? `You missed ${misses} of your last ${last.length} ${noun}` : "";
+    if (fresh > 0) why += (why ? "; " : "") + `${fresh} missed since yesterday`;
+    if (dueCount > 0) why += (why ? ", and " : "") + `${dueCount} ${dueCount === 1 ? "is" : "are"} due`;
+    why = why ? why[0].toUpperCase() + why.slice(1) + "." : "Nothing due.";
+    const items = Math.max(1, Math.min(dueCount || roundSize, roundSize));
+    return { area, title, due: dueCount, rate, misses, repeated, fresh, score, why, minutes: Math.max(1, Math.round(items * secondsEach / 60)) };
+  };
+  const mc = answers.filter(e => !cardIds.has(e.Question)).map(e => ({ key: e.Question, ok: right(e), day: e.Day }));
+  const cards = answers.filter(e => cardIds.has(e.Question)).map(e => ({ key: e.Question, ok: right(e), day: e.Day }));
+  const tl = T.events.filter(e => e.Kind === "timeline" && (e.Day || "") >= since).map(e => ({ key: e.Question, ok: !!e.Correct, day: e.Day }));
+  const ui = (() => { try { return JSON.parse(localStorage.getItem("focus-train-ui") || "{}"); } catch { return {}; } })();
+  return [
+    need("books", "Books practice", "questions", mc, due.filter(x => x.q.kind !== "card").length, ["allBooksDone", "booksDone"], 25, ui.books || 10),
+    need("cards", "Book flashcards", "cards", cards, due.filter(x => x.q.kind === "card").length, ["cardReviewDone"], 12, ui.cards || 20),
+    need("timeline", "Timeline", "dates", tl, T.timelineDue(ids), ["timelineDone"], 30, ui.timeline || 6),
+  ].sort((a, b) => b.score - a.score);
+};

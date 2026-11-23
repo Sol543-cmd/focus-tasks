@@ -1,9 +1,9 @@
 // Focus Tasks: the small helper that lets your phone install the page as an app.
 // It only handles the page's own files (always fetching the newest copy, with the last copy
 // as a fallback when you're offline). It never touches sign-in or your OneDrive data.
-const CACHE = "focus-tasks-v14";
-const FILES = ["./", "index.html", "boot.js?v=14", "app.js?v=14", "logic.js?v=14", "config.js?v=14", "msal-browser.min.js?v=14", "manifest.json", "icon-192.png", "icon-512.png",
-  "training.css?v=14", "training-data.js?v=14", "training-reader.js?v=14", "training-ui.js?v=14",
+const CACHE = "focus-tasks-v15";
+const FILES = ["./", "index.html", "boot.js?v=15", "app.js?v=15", "logic.js?v=15", "config.js?v=15", "msal-browser.min.js?v=15", "manifest.json", "icon-192.png", "icon-512.png",
+  "training.css?v=15", "training-data.js?v=15", "training-reader.js?v=15", "training-ui.js?v=15",
   "fonts/literata-latin-wght-normal.woff2", "fonts/literata-latin-wght-italic.woff2", "fonts/literata-latin-ext-wght-normal.woff2", "fonts/literata-latin-ext-wght-italic.woff2",
   "fonts/literata-greek-wght-normal.woff2", "fonts/literata-greek-wght-italic.woff2", "fonts/source-serif-4-latin-wght-normal.woff2", "fonts/source-serif-4-latin-wght-italic.woff2",
   "fonts/source-serif-4-greek-wght-normal.woff2", "fonts/source-serif-4-greek-wght-italic.woff2", "fonts/atkinson-hyperlegible-latin-400-normal.woff2",

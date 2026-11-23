@@ -110,6 +110,9 @@
     }
     parts.push(`<h2 class="tr-h">Today · ${E(today.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }))}</h2>${todayHtml}`);
 
+    // Practice next: the one of Books practice, Book flashcards and Timeline that needs you most right now.
+    if (off !== "off") parts.push(practiceNextCard());
+
     // Practice tiles
     const tiles = [];
     const tile = (act, title, count, sub) => tiles.push(`<button class="tr-tile" data-act="${act}"><span class="tr-tile-n${count ? "" : " zero"}">${count == null ? "·" : count}</span><b>${title}</b><small>${sub}</small></button>`);
@@ -144,10 +147,24 @@
     dash.querySelectorAll("[data-cover]").forEach(async el => { const c = T.course(el.dataset.cover); const url = c && await T.coverUrl(c); if (url) { el.textContent = ""; el.style.backgroundImage = `url("${url}")`; } });
     paintSync();
   }
+  function practiceNextCard() {
+    const needs = T.practiceNeeds(), top = needs[0];
+    const head = n => n.repeated > 0 ? `${n.repeated} you keep missing` : n.fresh > 0 ? `${n.fresh} missed recently` : `${n.due} due`;
+    if (!top || top.score <= 0) {
+      return `<div class="tr-next caught"><div class="tr-next-top"><span class="tr-next-badge">✓</span><div class="tr-next-main"><b>You're caught up</b><small>Nothing due and nothing you've been missing is waiting.</small></div><button class="tr-btn" data-act="cards-extra">Extra round</button></div></div>`;
+    }
+    const then = needs.slice(1).filter(n => n.score > 0);
+    return `<div class="tr-next"><div class="tr-next-top"><span class="tr-next-badge">${top.area === "timeline" ? "⏱" : top.area === "cards" ? "▤" : "?"}</span>
+      <div class="tr-next-main"><span class="tr-next-eyebrow">Practice next · about ${top.minutes} min</span><b>${E(top.title)}: ${E(head(top))}</b><small>${E(top.why)}</small></div>
+      <button class="tr-btn primary" data-act="${top.area}">Start</button></div>` +
+      (then.length ? `<div class="tr-next-then"><span class="tr-muted">After that:</span>${then.map(n => `<button class="tr-chipbtn" data-act="${n.area}">${E(n.title)} <small>· ${E(head(n))}</small></button>`).join("")}</div>` : "") + `</div>`;
+  }
+
   function lessonCard(book, done) {
     const exam = T.examDue(book.Id), next = T.nextLesson(book.Id);
     let title, sub, btn;
-    if (done) { title = book.Title; sub = "Today's lesson is done. Nicely done."; btn = next ? `<button class="tr-btn" data-act="lesson" data-book="${E(book.Id)}">Extra lesson</button>` : ""; }
+    if (done && exam) { title = book.Title; sub = `Today's lesson is done. ${E(exam.title)} comes back as tomorrow's lesson.`; btn = ""; }
+    else if (done) { title = book.Title; sub = "Today's lesson is done. Nicely done."; btn = next ? `<button class="tr-btn" data-act="lesson" data-book="${E(book.Id)}">Extra lesson</button>` : ""; }
     else if (exam) { title = exam.title; sub = `${E(book.Title)} · ${exam.questions.length} questions, pass with 70%`; btn = `<button class="tr-btn primary" data-act="exam" data-book="${E(book.Id)}">Start exam</button>`; }
     else if (next) {
       const going = T.inProgress(next);
@@ -163,9 +180,13 @@
     const act = b.dataset.act, book = b.dataset.book;
     if (act === "sync") { T.sync(); paintDash(); }
     else if (act === "reconnect") { if (typeof reconnect === "function") reconnect(); }
-    else if (act === "lesson") { const lr = T.nextLesson(book); if (lr) runLesson(lr); else note("No lesson ready in this book yet."); }
+    else if (act === "lesson") {
+      if (T.examDue(book)) { if (T.doneCountOn(book, new Date()) > 0) note("Today's lesson is done; the exam comes back tomorrow."); else runExam(book); return; }
+      const lr = T.nextLesson(book); if (lr) runLesson(lr); else note("No lesson ready in this book yet.");
+    }
     else if (act === "exam") runExam(book);
     else if (act === "books") runBooksPractice();
+    else if (act === "cards-extra") runFlashcards(true);
     else if (act === "cards") runFlashcards();
     else if (act === "timeline") runTimelinePractice();
     else if (act.startsWith("greek:")) runGreek(act.slice(6));
@@ -185,6 +206,7 @@
     document.body.classList.add("trp-open");
     const page = el.querySelector(".trp-page"), body = el.querySelector(".trp-body");
     let i = -1, closed = false;
+    for (const k in againCount) delete againCount[k]; // each round starts fresh
     const close = () => { if (closed) return; closed = true; el.remove(); if (!document.querySelector(".trp")) document.body.classList.remove("trp-open"); onClose && onClose(); paintDash(); };
     openLayer(close);
     el.querySelector("[data-x]").onclick = back;
@@ -197,7 +219,13 @@
       el.querySelector(".trp-bar span").style.width = `${Math.round((100 * i) / Math.max(1, steps.length - 1))}%`;
       page.innerHTML = ""; page.className = "trp-page";
       body.scrollTop = 0;
-      steps[i].run(page, go);
+      const idx = i;
+      steps[i].run(page, go, {
+        // A card marked ✕ comes back at the very end of the session (before the finish).
+        again: st => { const at = steps.findIndex((x, k) => k > idx && x.finish); steps.splice(at < 0 ? steps.length : at, 0, st); },
+        // …and isn't counted as done yet (so leaving and coming back still has it).
+        unmark: () => { steps[idx] = { ...steps[idx], key: null }; }
+      });
     };
     go();
     return { close: back, el };
@@ -317,7 +345,8 @@
   // ----- Memory cards -----
   /** A flashcard: the question first; tap anywhere to see the meaning (and again to go back).
    *  Grade with ✕ ✓✓ ✓ at the bottom, or swipe: left = Correct, up = Know well, down = Incorrect. */
-  function cardStep(host, lr, q, label, next, tally) {
+  const againCount = {};
+  function cardStep(host, lr, q, label, next, tally, ctx) {
     const front = q.front || q.prompt || "", backText = q.back || (q.options || [])[q.answer] || "";
     const m = /(\d+) of (\d+)/.exec(label), count = m ? `${m[1]}/${m[2]} cards` : label;
     const st0 = T.stateOf(lr.course, q.id, true);
@@ -349,11 +378,18 @@
       graded = true;
       if (tally) { tally.asked++; if (g > 0) tally.right++; }
       T.add({ Kind: "answer", Question: q.id, Concept: q.concept || "", Correct: g > 0, Sure: g > 0, Grade: g }, lr.course);
+      let again = false;
+      if (g === 0 && ctx && (againCount[q.id] || 0) < 3) {
+        againCount[q.id] = (againCount[q.id] || 0) + 1;
+        again = true;
+        ctx.unmark();
+        ctx.again({ key: null, run: (h, n, c) => cardStep(h, lr, q, "Again · until you know it", n, tally, c) });
+      }
       host.querySelectorAll("[data-g]").forEach(x => { x.disabled = true; x.classList.toggle("sel", +x.dataset.g === g); });
       const st = T.stateOf(lr.course, q.id, true);
       flash.hidden = false;
       flash.className = "tr-fc-flash " + (g === 0 ? "bad" : "good");
-      flash.innerHTML = `<b>${g === 0 ? "✕ Incorrect" : g === 2 ? "✓✓ Know well" : "✓ Correct"}</b><small>Back ${daysText(st.due)}</small>`;
+      flash.innerHTML = `<b>${g === 0 ? "✕ Incorrect" : g === 2 ? "✓✓ Know well" : "✓ Correct"}</b><small>${again ? "Back at the end of this round" : "Back " + daysText(st.due)}</small>`;
       if (!eink()) {
         const d = dir || (g === 0 ? "down" : g === 2 ? "up" : "left");
         const off = { left: "translateX(-120%) rotate(-8deg)", up: "translateY(-120%)", down: "translateY(120%)" }[d];
@@ -398,7 +434,7 @@
   }
 
   function questionStep(lr, q, label, key, tally) {
-    return { key, run: (host, next) => q.kind === "card" ? cardStep(host, lr, q, label, next, tally) : q.kind === "order" ? orderStep(host, lr, q, label, next, tally) : mcStep(host, lr, q, label, true, next, tally) };
+    return { key, run: (host, next, ctx) => q.kind === "card" ? cardStep(host, lr, q, label, next, tally, ctx) : q.kind === "order" ? orderStep(host, lr, q, label, next, tally) : mcStep(host, lr, q, label, true, next, tally) };
   }
 
   // ----- Main ideas (one summary per section) -----
@@ -499,7 +535,7 @@
     const practice = l.practice.filter(q => !hidden.has(q.id) && !done.has("practice:" + q.id));
     practice.forEach((q, n) => steps.push(questionStep(lr, q, `Practice ${n + 1} of ${practice.length}`, "practice:" + q.id, tally)));
     const cards = l.cards.filter(q => !hidden.has(q.id) && !done.has("card:" + q.id));
-    cards.forEach((q, n) => steps.push({ key: "card:" + q.id, run: (host, next) => cardStep(host, lr, q, `Memory card ${n + 1} of ${cards.length}`, next, tally) }));
+    cards.forEach((q, n) => steps.push({ key: "card:" + q.id, run: (host, next, ctx) => cardStep(host, lr, q, `Memory card ${n + 1} of ${cards.length}`, next, tally, ctx) }));
     if (l.endsChapter || l.quiz.length) {
       const quiz = l.quiz.filter(q => !hidden.has(q.id) && !done.has("quiz:" + q.id));
       quiz.forEach((q, n) => steps.push(questionStep(lr, q, `Chapter quiz ${n + 1} of ${quiz.length}`, "quiz:" + q.id, tally)));
@@ -510,7 +546,7 @@
     }
     const review = T.dueReview(id, T.config.ReviewCap || 8).filter(x => !done.has("review:" + x.q.id)).sort((a, b) => (a.q.kind === "card" ? 0 : 1) - (b.q.kind === "card" ? 0 : 1));
     review.forEach((x, n) => steps.push(questionStep(x.l, x.q, `Review ${n + 1} of ${review.length}`, "review:" + x.q.id, tally)));
-    steps.push({ key: null, run: host => {
+    steps.push({ key: null, finish: true, run: host => {
       T.add({ Kind: "lessonDone", Lesson: lr.index }, id);
       const nx = T.nextLesson(id);
       host.innerHTML = `<h2 class="tr-title">Lesson finished</h2><p class="tr-big">${tally.asked ? `${tally.right} of ${tally.asked} right (this sitting).` : "Nicely done."}</p>
@@ -538,7 +574,7 @@
   // ---------- Practice ----------
 
   function finishScreen(title, tally, extra = "") {
-    return { key: null, run: host => {
+    return { key: null, finish: true, run: host => {
       host.innerHTML = `<h2 class="tr-title">${E(title)}</h2><p class="tr-big">${tally.asked ? `${tally.right} of ${tally.asked} right.` : "Nothing answered this time."}</p>${extra}`;
       nextButton(host, back, "Close");
     } };
@@ -548,7 +584,8 @@
     const list = ids().flatMap(id => T.dueReview(id).filter(x => x.q.kind !== "card")).slice(0, UI.books);
     if (!list.length) { openReviewChooser(); return; }
     const steps = list.map((x, n) => questionStep(x.l, x.q, `Question ${n + 1} of ${list.length} · ${T.course(x.l.course)?.Title || ""}, ch. ${x.l.pack.chapter}`, null, tally));
-    steps.push(finishScreen("Books practice done", tally, `<p>Missed ones come back tomorrow.</p>`));
+    const fin = finishScreen("Books practice done", tally, `<p>Missed ones come back tomorrow.</p>`);
+    steps.push({ ...fin, run: host => { T.add({ Kind: "allBooksDone" }, list[0].l.course); fin.run(host); } });
     player("Books practice", steps);
   }
   /** Nothing due: review a lesson you choose. */
@@ -572,17 +609,25 @@
     steps.push(finishScreen("Review done", tally));
     player(lr.lesson.title || "Review", steps);
   }
-  function runFlashcards() {
+  function runFlashcards(extra = false) {
     const tally = { asked: 0, right: 0 };
-    let list = ids().flatMap(id => T.dueReview(id).filter(x => x.q.kind === "card"));
+    let list = extra ? [] : ids().flatMap(id => T.dueReview(id).filter(x => x.q.kind === "card"));
     let title = "Flashcards";
+    if (extra) {
+      // Extra round: your 10 shakiest cards from lessons you've done (fewest right in a row first).
+      list = ids().flatMap(id => { const done = T.doneLessons(id), hidden = T.hidden(id), off = T.cardsOff(id);
+        return T.B(id).lessons.filter(l => done.has(l.index)).flatMap(l => l.lesson.cards.filter(q => !hidden.has(q.id) && !off.has(q.id)).map(q => ({ l, q }))); })
+        .map(x => ({ ...x, s: T.stateOf(x.l.course, x.q.id, true) })).filter(x => x.s.seen > 0)
+        .sort((a, b) => a.s.streak - b.s.streak || a.s.due - b.s.due).slice(0, 10);
+      title = "Your shakiest cards";
+    }
     if (!list.length) { list = ids().flatMap(id => T.hardestCardsToday(id)); title = "Today's hardest cards"; }
     list = list.slice(0, UI.cards);
     if (!list.length) { note("No cards due. Finish a lesson and its cards come up here."); return; }
-    const steps = list.map((x, n) => ({ key: null, run: (host, next) => cardStep(host, x.l, x.q, `Card ${n + 1} of ${list.length}`, next, tally) }));
-    steps.push({ key: null, run: host => {
+    const steps = list.map((x, n) => ({ key: null, run: (host, next, ctx) => cardStep(host, x.l, x.q, `Card ${n + 1} of ${list.length}`, next, tally, ctx) }));
+    steps.push({ key: null, finish: true, run: host => {
       T.add({ Kind: "cardReviewDone", Lesson: -1 }, list[0].l.course);
-      host.innerHTML = `<h2 class="tr-title">Flashcards finished</h2><p class="tr-big">${tally.asked ? `${tally.right} of ${tally.asked} known.` : "Nothing graded this time."}</p><p>Cards you marked ✕ come back tomorrow; ✓ after a while; ✓✓ after a long while.</p>`;
+      host.innerHTML = `<h2 class="tr-title">Flashcards finished</h2><p class="tr-big">${tally.asked ? `${tally.right} of ${tally.asked} known.` : "Nothing graded this time."}</p><p>Cards you marked ✕ came back at the end until you knew them, and come back tomorrow too; ✓ after a while; ✓✓ after a long while.</p>`;
       nextButton(host, back, "Close");
     } });
     player(title, steps);
@@ -591,7 +636,7 @@
     const tally = { asked: 0, right: 0 };
     const steps = [{ key: null, run: (host, next) => { host.innerHTML = `<h2 class="tr-title">${E(title)}</h2><p>${plural(list.length, "question")}. Each names its book and chapter.</p>`; nextButton(host, next, "Begin"); } }];
     list.forEach((x, n) => steps.push(questionStep(x.l, x.q, `Question ${n + 1} of ${list.length} · ${T.course(x.l.course)?.Title || ""}, ch. ${x.l.pack.chapter}`, null, tally)));
-    steps.push({ key: null, run: host => { finish(host, tally); nextButton(host, back, "Close"); } });
+    steps.push({ key: null, finish: true, run: host => { finish(host, tally); nextButton(host, back, "Close"); } });
     player(title, steps);
   }
   function runExam(id) {
