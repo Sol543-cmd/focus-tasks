@@ -136,7 +136,7 @@
 
     // This week
     const w = weekStats();
-    parts.push(`<h2 class="tr-h">This week</h2><div class="tr-stats"><div><b>${w.lessons}</b><small>${w.lessons === 1 ? "lesson" : "lessons"} done · ${w.planned} planned</small></div><div><b>${w.answers}</b><small>answers</small></div><div><b>${w.answers ? Math.round((100 * w.right) / w.answers) : 0}%</b><small>right and sure</small></div></div>`);
+    parts.push(`<h2 class="tr-h">This week</h2><div class="tr-stats"><div><b>${w.lessons}</b><small>${w.lessons === 1 ? "lesson" : "lessons"} done · ${w.planned} planned</small></div><div><b>${w.answers}</b><small>answers</small></div><div><b>${w.answers ? Math.round((100 * w.right) / w.answers) : 0}%</b><small>right</small></div></div>`);
     const st = T.status;
     parts.push(`<p class="tr-foot">${E(st.busy ? st.step || "Syncing…" : st.text || "")}${st.media ? `<br>${E(st.media)}` : ""}${st.error ? `<br><button class="tr-link" data-act="sync">Try again</button>` : ""}</p>`);
     if (st.error) parts.unshift(`<div class="tr-banner">${E(st.error)}${st.signin ? ` <button class="tr-btn primary" data-act="reconnect">Reconnect</button>` : ""}</div>`);
@@ -237,49 +237,45 @@
     host.append(m);
   }
 
-  // ----- Multiple choice -----
+  // ----- Multiple choice (every one works the same: tap an answer, Check or Enter shows it, Next or Enter moves on) -----
   function mcStep(host, lr, q, label, scored, next, tally) {
     host.innerHTML = `<div class="tr-step">${E(label)}</div><h2 class="tr-q">${E(q.prompt)}</h2>
       <div class="tr-opts">${(q.options || []).map((t, i) => `<button class="tr-opt" data-i="${i}"><span class="tr-radio"></span><span>${E(t)}</span></button>`).join("")}</div>
-      <div class="tr-sure" hidden><span class="tr-muted">How sure are you?</span>${btn("Sure", "primary")}${btn("Guessing")}</div><div class="tr-after"></div>`;
+      <div class="tr-act tr-checkrow"><button class="tr-btn primary" disabled>Check</button></div><div class="tr-after"></div>`;
     qMenu(host, q, lr.course);
     let chosen = -1, answered = false;
-    const opts = [...host.querySelectorAll(".tr-opt")], sure = host.querySelector(".tr-sure");
-    opts.forEach(o => o.onclick = () => {
-      if (answered) return;
-      chosen = +o.dataset.i;
-      opts.forEach(x => x.classList.toggle("sel", x === o));
-      if (scored) { sure.hidden = false; sure.querySelector(".primary").focus({ preventScroll: true }); }
-      else answer(false);
-    });
-    const [sureBtn, guessBtn] = sure.querySelectorAll("button");
-    sureBtn.onclick = () => answer(true); guessBtn.onclick = () => answer(false);
+    const opts = [...host.querySelectorAll(".tr-opt")], check = host.querySelector(".tr-checkrow button");
+    const pick = i => { if (answered) return; chosen = i; opts.forEach((x, k) => x.classList.toggle("sel", k === i)); check.disabled = false; };
+    opts.forEach((o, i) => o.onclick = () => pick(i));
+    check.onclick = answer;
     const onKey = e => {
-      if (answered || !document.body.contains(host)) { document.removeEventListener("keydown", onKey); return; }
+      if (!document.body.contains(host) || answered) { document.removeEventListener("keydown", onKey); return; }
       const n = parseInt(e.key, 10);
-      if (n >= 1 && n <= opts.length) opts[n - 1].click();
+      if (n >= 1 && n <= opts.length) pick(n - 1);
+      else if (e.key === "Enter" && chosen >= 0) { e.preventDefault(); answer(); }
     };
     document.addEventListener("keydown", onKey);
-    function answer(isSure) {
+    function answer() {
       if (answered || chosen < 0) return;
-      answered = true; sure.hidden = true;
+      answered = true;
+      document.removeEventListener("keydown", onKey);
+      host.querySelector(".tr-checkrow").remove();
       const right = chosen === q.answer;
       opts.forEach((o, k) => { o.disabled = true; o.classList.add(k === q.answer ? "right" : k === chosen ? "wrong" : "dim"); });
       const after = host.querySelector(".tr-after");
       let verdict = right ? "Right" : "Not quite";
       if (scored) {
-        if (tally) { tally.asked++; if (right && isSure) tally.right++; }
-        T.add({ Kind: "answer", Question: q.id, Concept: q.concept || "", Correct: right, Sure: isSure }, lr.course);
-        verdict = right ? (isSure ? "Right, and you were sure" : "Right, but you were guessing") : isSure ? "Not quite, and you were sure" : "Not quite";
-        const st = T.stateOf(lr.course, q.id, false);
-        verdict += ` <span class="tr-muted">· back ${daysText(st.due)}</span>`;
-      }
+        if (tally) { tally.asked++; if (right) tally.right++; }
+        T.add({ Kind: "answer", Question: q.id, Concept: q.concept || "", Correct: right, Sure: true }, lr.course);
+        verdict += ` <span class="tr-muted">· back ${daysText(T.stateOf(lr.course, q.id, false).due)}</span>`;
+      } else if (!right) verdict = `The answer: ${E(q.options[q.answer])}. Watch for it in the reading.`;
       after.innerHTML = `<p class="tr-verdict ${right ? "ok" : "bad"}">${verdict}</p>${q.why ? `<p class="tr-why">${E(q.why)}</p>` : ""}`;
       if ((q.refs || []).length) {
         const a = document.createElement("button"); a.className = "tr-link"; a.textContent = "Show in book";
         a.onclick = () => showInBook(lr, q.refs[0]); after.append(a);
       }
-      nextButton(host, next);
+      // A fresh press of Enter moves on (not the one that just checked).
+      setTimeout(() => nextButton(host, next), 0);
     }
   }
 
@@ -517,7 +513,7 @@
     steps.push({ key: null, run: host => {
       T.add({ Kind: "lessonDone", Lesson: lr.index }, id);
       const nx = T.nextLesson(id);
-      host.innerHTML = `<h2 class="tr-title">Lesson finished</h2><p class="tr-big">${tally.asked ? `${tally.right} of ${tally.asked} right and sure (this sitting).` : "Nicely done."}</p>
+      host.innerHTML = `<h2 class="tr-title">Lesson finished</h2><p class="tr-big">${tally.asked ? `${tally.right} of ${tally.asked} right (this sitting).` : "Nicely done."}</p>
         <p>Questions you missed or guessed come back tomorrow; ones you knew come back after a longer gap. It counts on your computers too.</p>${nx ? `<p class="tr-muted">Next: chapter ${nx.pack.chapter} · ${E(nx.lesson.title || "Lesson " + nx.number)}</p>` : ""}`;
       nextButton(host, back, "Close");
     } });
@@ -605,7 +601,7 @@
       const passed = t.asked > 0 && t.right * 10 >= t.asked * 7;
       T.add({ Kind: "examDone", Note: exam.key, Correct: passed, Lesson: -1 }, id);
       T.add({ Kind: "lessonDone", Lesson: -1, Note: "exam:" + exam.key }, id);
-      host.innerHTML = `<h2 class="tr-title">${passed ? "Passed" : "Not passed yet"}</h2><p class="tr-big">${t.right} of ${t.asked} right and sure.</p><p>${passed ? (exam.key === "final" ? "You've finished the book. Its questions now join All books." : "On to the next part of the book.") : "The questions you missed come back in review. The exam comes back as tomorrow's lesson."}</p>`;
+      host.innerHTML = `<h2 class="tr-title">${passed ? "Passed" : "Not passed yet"}</h2><p class="tr-big">${t.right} of ${t.asked} right.</p><p>${passed ? (exam.key === "final" ? "You've finished the book. Its questions now join All books." : "On to the next part of the book.") : "The questions you missed come back in review. The exam comes back as tomorrow's lesson."}</p>`;
     });
   }
   function runAllBooks() {
@@ -613,7 +609,7 @@
     if (!list.length) { note("Finish a book (its final exam) and its questions come here."); return; }
     runQuestions("All books", list, (host, t) => {
       T.add({ Kind: "allBooksDone" }, list[0].l.course);
-      host.innerHTML = `<h2 class="tr-title">Round finished</h2><p class="tr-big">${t.right} of ${t.asked} right and sure.</p>`;
+      host.innerHTML = `<h2 class="tr-title">Round finished</h2><p class="tr-big">${t.right} of ${t.asked} right.</p>`;
     });
   }
 
