@@ -319,28 +319,86 @@
   }
 
   // ----- Memory cards -----
+  /** A flashcard: the question first; tap anywhere to see the meaning (and again to go back).
+   *  Grade with ✕ ✓✓ ✓ at the bottom, or swipe: left = Correct, up = Know well, down = Incorrect. */
   function cardStep(host, lr, q, label, next, tally) {
     const front = q.front || q.prompt || "", backText = q.back || (q.options || [])[q.answer] || "";
-    host.innerHTML = `<div class="tr-step">${E(label)}</div>
-      <button class="tr-card"><span class="tr-card-f">${E(front)}</span><span class="tr-card-b" hidden>${E(backText)}</span><small class="tr-muted">Tap to flip</small></button>
-      <p class="tr-muted tr-center">Grade it, flipped or not:</p>
-      <div class="tr-grades"><button data-g="0" class="tr-btn g0">✕<small>Again</small></button><button data-g="1" class="tr-btn g1">✓<small>Know it</small></button><button data-g="2" class="tr-btn g2">✓✓<small>Know it well</small></button></div><div class="tr-after"></div>`;
+    const m = /(\d+) of (\d+)/.exec(label), count = m ? `${m[1]}/${m[2]} cards` : label;
+    const st0 = T.stateOf(lr.course, q.id, true);
+    const interval = st0.seen && st0.last ? `${Math.max(0, Math.round((st0.due - st0.last) / 86400000))}d` : "new";
+    host.classList.add("tr-cardpage");
+    host.innerHTML = `
+      <div class="tr-fc" role="button" tabindex="0" aria-label="Card: tap to see the meaning">
+        <div class="tr-fc-in">
+          <div class="tr-fc-count">${E(count)}</div>
+          <div class="tr-fc-q">${E(front)}</div>
+          <div class="tr-fc-a" hidden>${E(backText)}${q.why ? `<small>${E(q.why)}</small>` : ""}</div>
+        </div>
+        <div class="tr-fc-flash" hidden></div>
+      </div>
+      <div class="tr-fc-stats">Streak: ${st0.streak}<br>Interval: ${interval}</div>
+      <div class="tr-fc-btns">
+        <button data-g="0" class="tr-round bad" aria-label="Incorrect">✕</button>
+        <button data-g="2" class="tr-round good" aria-label="Know well">✓✓</button>
+        <button data-g="1" class="tr-round good" aria-label="Correct">✓</button>
+      </div>`;
     qMenu(host, q, lr.course);
-    const card = host.querySelector(".tr-card");
-    card.onclick = () => { host.querySelector(".tr-card-b").hidden = false; card.classList.add("flipped"); card.querySelector("small").hidden = true; };
-    let graded = false;
-    host.querySelectorAll("[data-g]").forEach(b => b.onclick = () => {
+    const card = host.querySelector(".tr-fc"), inner = host.querySelector(".tr-fc-in");
+    const qEl = host.querySelector(".tr-fc-q"), aEl = host.querySelector(".tr-fc-a"), flash = host.querySelector(".tr-fc-flash");
+    let showing = false, graded = false;
+    const flip = () => { if (graded) return; showing = !showing; qEl.hidden = showing; aEl.hidden = !showing; card.setAttribute("aria-label", showing ? "Meaning: tap to see the question" : "Card: tap to see the meaning"); };
+    const eink = () => T.reader.isEink();
+    function grade(g, dir) {
       if (graded) return;
       graded = true;
-      const g = +b.dataset.g;
       if (tally) { tally.asked++; if (g > 0) tally.right++; }
       T.add({ Kind: "answer", Question: q.id, Concept: q.concept || "", Correct: g > 0, Sure: g > 0, Grade: g }, lr.course);
-      card.click();
-      host.querySelectorAll("[data-g]").forEach(x => { x.disabled = true; x.classList.toggle("sel", x === b); });
+      host.querySelectorAll("[data-g]").forEach(x => { x.disabled = true; x.classList.toggle("sel", +x.dataset.g === g); });
       const st = T.stateOf(lr.course, q.id, true);
-      host.querySelector(".tr-after").innerHTML = `<p class="tr-muted">Back ${daysText(st.due)}.</p>${q.why ? `<p class="tr-why">${E(q.why)}</p>` : ""}`;
-      setTimeout(next, g === 0 ? 1100 : 650);
+      flash.hidden = false;
+      flash.className = "tr-fc-flash " + (g === 0 ? "bad" : "good");
+      flash.innerHTML = `<b>${g === 0 ? "✕ Incorrect" : g === 2 ? "✓✓ Know well" : "✓ Correct"}</b><small>Back ${daysText(st.due)}</small>`;
+      if (!eink()) {
+        const d = dir || (g === 0 ? "down" : g === 2 ? "up" : "left");
+        const off = { left: "translateX(-120%) rotate(-8deg)", up: "translateY(-120%)", down: "translateY(120%)" }[d];
+        inner.style.transition = "transform .32s ease, opacity .32s ease";
+        setTimeout(() => { inner.style.transform = off; inner.style.opacity = "0"; }, 220);
+      }
+      document.removeEventListener("keydown", onKey);
+      setTimeout(next, eink() ? 700 : 650);
+    }
+    host.querySelectorAll("[data-g]").forEach(b => b.onclick = () => grade(+b.dataset.g));
+
+    // Tap to flip; swipe to grade.
+    let sx = 0, sy = 0, down = false, moved = false;
+    card.addEventListener("pointerdown", e => { if (graded) return; down = true; moved = false; sx = e.clientX; sy = e.clientY; inner.style.transition = "none"; card.setPointerCapture?.(e.pointerId); });
+    card.addEventListener("pointermove", e => {
+      if (!down) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) moved = true;
+      if (moved && !eink()) inner.style.transform = `translate(${Math.min(dx, 30)}px, ${dy}px) rotate(${Math.max(-8, Math.min(0, dx / 25))}deg)`;
     });
+    const end = e => {
+      if (!down) return;
+      down = false;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      inner.style.transition = "transform .2s ease"; inner.style.transform = "";
+      if (!moved) { flip(); return; }
+      if (dx < -70 && Math.abs(dx) > Math.abs(dy)) grade(1, "left");
+      else if (dy < -70 && Math.abs(dy) > Math.abs(dx)) grade(2, "up");
+      else if (dy > 70 && Math.abs(dy) > Math.abs(dx)) grade(0, "down");
+    };
+    card.addEventListener("pointerup", end);
+    card.addEventListener("pointercancel", () => { down = false; inner.style.transform = ""; });
+    const onKey = e => {
+      if (!document.body.contains(card)) { document.removeEventListener("keydown", onKey); return; }
+      if (e.key === " " || e.key === "Enter") { e.preventDefault(); flip(); }
+      else if (e.key === "1" || e.key === "ArrowDown") grade(0, "down");
+      else if (e.key === "2" || e.key === "ArrowLeft") grade(1, "left");
+      else if (e.key === "3" || e.key === "ArrowUp") grade(2, "up");
+    };
+    document.addEventListener("keydown", onKey);
+    card.focus({ preventScroll: true });
   }
 
   function questionStep(lr, q, label, key, tally) {

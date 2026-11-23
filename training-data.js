@@ -625,7 +625,7 @@ T.stateOf = (id, q, longTerm) => {
     }
     const vote = T.voteOf(id, q);
     if (vote !== 0 && last && due && due > last) { const gap = Math.round((due - last) / DAY); due = T.addDays(last, vote > 0 ? Math.max(1, Math.floor(gap / 2)) : gap * 2); }
-    return { due: due || new Date(0), streak, misconception: miscon, seen, graduated: streak > gaps.length };
+    return { due: due || new Date(0), streak, misconception: miscon, seen, graduated: streak > gaps.length, last };
   });
 };
 T.released = (id, q) => {
